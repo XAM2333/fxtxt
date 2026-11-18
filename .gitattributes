@@ -1,0 +1,15 @@
+* text=auto eol=lf
+
+# binaries
+*.g1a   binary
+*.dlf   binary
+*.png   binary
+*.obj   binary
+*.elf   binary
+
+# C sources
+*.c     text
+*.h     text
+*.py    text
+*.md    text
+*.txt   text
