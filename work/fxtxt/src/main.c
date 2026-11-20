@@ -1,3 +1,16 @@
+/*
+ * FXTXT - CASIO fx-9750GIII / fx-9860GIII 中文文本查看 / 编辑器
+ * Copyright (C) 2026 FXTXT contributors
+ *
+ * SPDX-License-Identifier: GPL-3.0-or-later
+ *
+ * This program is free software: you can redistribute it and/or modify it
+ * under the terms of the GNU General Public License as published by the Free
+ * Software Foundation, either version 3 of the License, or (at your option)
+ * any later version. It is distributed WITHOUT ANY WARRANTY; see the GNU
+ * General Public License for more details.
+ */
+
 //---
 //	FXTXT - graphical text viewer / editor for the CASIO fx-9750GIII
 //
@@ -18,6 +31,7 @@
 #include <unistd.h>
 
 #include "font.h"
+#include "icons.h"
 #include "pinyin.h"
 
 #define TEXT_MAX    6144
@@ -39,27 +53,32 @@ static int text_max = TEXT_MIN;
 #define CELL_CJK   0x0100u
 
 enum { MODE_LIST = 0, MODE_VIEW, MODE_KEYB, MODE_HELP, MODE_NAME, MODE_SEARCH, MODE_CONFIRM,
-       MODE_DEBUG };
+       };
 enum { PAGE_PINYIN = 0, PAGE_PUNCT, PAGE_LOWER, PAGE_UPPER, PAGE_DIGIT, PAGE_SYMBOL };
 #define PAGE_COUNT 6
 
-static int utf8_seq(unsigned char const *s, int n, int i, unsigned *cp);
-static int gb_lookup(unsigned short uni);
 
 /* Chinese punctuation, one UTF-8 sequence per grid cell (13 x 2). */
-static char const *punct_list =
-	"，。、？！：；“”‘’（）"
-	"《》〈〉…—·「」『』【】〔〕";
+/* Chinese punctuation as GB2312 byte pairs, one grid cell each. */
+static unsigned char const punct_gb[] = {
+	0xA3, 0xAC, 0xA1, 0xA3,
+	0xA1, 0xA2, 0xA3, 0xBF,
+	0xA3, 0xA1, 0xA3, 0xBA,
+	0xA3, 0xBB, 0xA1, 0xB0,
+	0xA1, 0xB1, 0xA1, 0xAE,
+	0xA1, 0xAF, 0xA3, 0xA8,
+	0xA3, 0xA9, 0xA1, 0xB6,
+	0xA1, 0xB7, 0xA1, 0xB4,
+	0xA1, 0xB5, 0xA1, 0xAD,
+	0xA1, 0xAA, 0xA1, 0xA4,
+	0xA1, 0xBE, 0xA1, 0xBF,
+	0xA1, 0xC0, 0xA1, 0xC1,
+	0xA1, 0xDE, 0xA1, 0xDF,
+	0xA1, 0xE0, 0xA1, 0xE1,
+};
+#define PUNCT_COUNT ((int)(sizeof punct_gb) / 2)
 
 /* Byte offset of the n-th UTF-8 character in punct_list. */
-static int punct_offset(int n)
-{
-	unsigned cp = 0;
-	int len = (int)strlen(punct_list), i = 0;
-	while (i < len && n-- > 0)
-		i += utf8_seq((unsigned char const *)punct_list, len, i, &cp);
-	return i;
-}
 
 static uint16_t *cells;
 static int ncell;
@@ -74,7 +93,6 @@ static int shift_armed;
 static int alpha_armed;		/* capitals (name prompt F1) */
 static int cn_mode = 1;		/* 1 = pinyin, 0 = direct letters */
 static int dirty;
-static int enc_utf8;
 
 #define NAME_FC_MAX 64
 static char (*names)[NAME_MAX_L + 1];
@@ -108,8 +126,6 @@ static int py_syllable = -1;		/* matched syllable index, -1 = none */
 static int py_pick;
 
 /* forward declarations (helpers used by the chrome renderers) */
-static int gb_lookup(unsigned short uni);
-static int utf8_seq(unsigned char const *s, int n, int i, unsigned *cp);
 static int offset_to_line(int off);
 static char ev_letter(key_event_t ev);
 static char alpha_letter(int key);
@@ -193,29 +209,47 @@ static int cell_adv(uint16_t cell)
 			i = '?' - FONT_FIRST;
 		return font_adv8[i];
 	}
+	/* 0xA1A4 (·) sits alone in the middle of its cell: do not pad it */
+	if (cell == CELL_CJK + 3)
+		return 4;
 	return 8;			/* CJK glyphs are full width */
 }
 
 /* Chrome text may be Chinese: decode UTF-8 and draw with the small font. */
 static int ui_clip_x = 128;
+static int blink_on = 1;		/* caret phase, flips every 0.25 s */
+
 
 static int draw_ui(int x, int y, char const *s, int invert)
 {
 	unsigned char const *p = (unsigned char const *)s;
-	int n = (int)strlen(s), i = 0;
-	while (i < n && x < ui_clip_x) {
-		unsigned cp = 0;
-		int used = utf8_seq(p, n, i, &cp);
+	int n = (int)strlen(s), i = 0, cut = 0;
+	while (i < n) {
 		uint16_t cell;
-		if (cp < 0x80) {
-			cell = (uint16_t)(cp - 0x20);
+		if (p[i] < 0x80) {
+			cell = (uint16_t)(p[i] - 0x20);
+			i++;
+		} else if (i + 1 < n) {
+			int g = (p[i] - 0xA1) * 94 + (p[i + 1] - 0xA1);
+			cell = (g >= 0 && g < FONT_GLYPHS) ? (uint16_t)(CELL_CJK + g)
+							   : (uint16_t)('?' - 0x20);
+			i += 2;
 		} else {
-			int g = gb_lookup((unsigned short)cp);
-			cell = (g >= 0) ? (uint16_t)(CELL_CJK + g) : (uint16_t)('?' - 0x20);
+			cell = (uint16_t)('?' - 0x20);
+			i++;
+		}
+		int adv = cell_adv(cell);
+		if (x + adv > ui_clip_x) {
+			cut = 1;
+			break;
 		}
 		draw_cell(x, y, cell, invert);
-		x += cell_adv(cell);
-		i += used;
+		x += adv;
+	}
+	if (cut) {
+		/* 0xA1 0xAD is … , glyph 12 of the symbol row */
+		draw_cell(x, y, (uint16_t)(CELL_CJK + 12), invert);
+		x += 8;
 	}
 	return x;
 }
@@ -231,6 +265,13 @@ static void draw_small(int x, int y, char const *s, int invert)
 	}
 }
 
+#define SEARCH_MAX_HITS 200
+static int search_hits[SEARCH_MAX_HITS];
+static int search_n;			/* matches stored */
+static int search_cur;			/* index of the match on screen */
+static void search_show(void);
+static void build_search_cells(void);
+
 /*=== window chrome ========================================================*/
 
 /* Width in pixels of a UTF-8 string in the small font. */
@@ -239,17 +280,20 @@ static int ui_width(char const *s)
 	unsigned char const *p = (unsigned char const *)s;
 	int n = (int)strlen(s), i = 0, x = 0;
 	while (i < n) {
-		unsigned cp = 0;
-		int used = utf8_seq(p, n, i, &cp);
 		uint16_t cell;
-		if (cp < 0x80) {
-			cell = (uint16_t)(cp - 0x20);
+		if (p[i] < 0x80) {
+			cell = (uint16_t)(p[i] - 0x20);
+			i++;
+		} else if (i + 1 < n) {
+			int g = (p[i] - 0xA1) * 94 + (p[i + 1] - 0xA1);
+			cell = (g >= 0 && g < FONT_GLYPHS) ? (uint16_t)(CELL_CJK + g)
+							   : (uint16_t)('?' - 0x20);
+			i += 2;
 		} else {
-			int g = gb_lookup((unsigned short)cp);
-			cell = (g >= 0) ? (uint16_t)(CELL_CJK + g) : (uint16_t)('?' - 0x20);
+			cell = (uint16_t)('?' - 0x20);
+			i++;
 		}
 		x += cell_adv(cell);
-		i += used;
 	}
 	return x;
 }
@@ -257,10 +301,10 @@ static int ui_width(char const *s)
 /* The bottom bar shows key hints; transient messages override them until the
    next key press. */
 static int status_sticky;
-static char const *hint_list = "F1新建 F2上次 DEL删 F6帮";
-static char const *hint_view = "F2找 F3编辑 F4编码 F6帮助";
-static char const *hint_edit_cn = "中 F1存 F3退 F4标 F5中英";
-static char const *hint_edit_en = "英 F1存 F3退 F4标 F5中英";
+static char const *hint_list = "F1\xD0\xC2\xBD\xA8 F2\xC9\xCF\xB4\xCE DEL\xC9\xBE F6\xB0\xEF";
+static char const *hint_view = "F2\xD5\xD2 F3\xB1\xE0\xBC\xAD F6\xB0\xEF\xD6\xFA";
+static char const *hint_edit_cn = "\xD6\xD0 F1\xB4\xE6 F3\xCD\xCB F4\xB1\xEA F5\xD6\xD0\xD3\xA2";
+static char const *hint_edit_en = "\xD3\xA2 F1\xB4\xE6 F3\xCD\xCB F4\xB1\xEA F5\xD6\xD0\xD3\xA2";
 
 /* Black square with a white letter: A = letter lock (ALPHA), S = capitals (SHIFT). */
 static void ui_badge(char ch)
@@ -270,11 +314,17 @@ static void ui_badge(char ch)
 	draw_cell(x + 1, y, (uint16_t)((unsigned char)ch - 0x20), 1);
 }
 
+/* 0: reserve room for the state boxes, 1: flush with the right edge */
+static int ui_info_right;
+
+static int ui_info_w;		/* width of the last info string drawn */
+
 static void ui_hints(char const *hints, char const *info, int show_lock)
 {
 	(void)show_lock;
+	ui_info_w = (info && info[0]) ? ui_width(info) : 0;
 	if (info && info[0]) {
-		int x = 96 - ui_width(info);
+		int x = (ui_info_right ? 127 : 96) - ui_info_w;
 		if (x < 40) x = 40;
 		draw_ui(x, 1, info, 1);
 	}
@@ -301,9 +351,10 @@ static void ui_fkeys(void)
 		if (!s || !s[0])
 			continue;
 		int w = ui_width(s);
-		int x = i * 21 + (21 - w) / 2;
-		if (x < i * 21 + 1)
-			x = i * 21 + 1;
+		int left = i * 21, right = (i == 5) ? 127 : i * 21 + 20;
+		int x = (left + right + 1) / 2 - w / 2;
+		if (x < left + 1)
+			x = left + 1;
 		draw_ui(x, STATUS_Y, s, 0);
 	}
 }
@@ -315,50 +366,83 @@ static void ui_topbox(int x, char ch)
 	draw_cell(x + 1, 1, (uint16_t)((unsigned char)ch - 0x20), 0);
 }
 
-/* Right side of the title bar: input mode (中/英) and SHIFT/ALPHA state. */
+/* Right side of the title bar: case and input mode.  Every box is
+   9x9 with a one pixel gap, like the A/S badges. */
 static void ui_top_state(int show_input)
 {
 	if (!show_input)
-		return;			/* letter state only matters while editing */
+		return;		/* letter state only matters while editing */
 
-	int x = 127;
-	if (alpha_lock || alpha_armed) {
-		ui_topbox(x - 8, 'A');
+	int x = 127;			/* right edge of the next box */
+
+	if (shift_armed) {
+		/* SHIFT wins: it switches to capitals for the next key, so the
+		   letter lock is not shown at the same time. */
+		drect(x - 8, 0, x, 8, C_WHITE);
+		draw_cell(x - 7, 1, (uint16_t)('S' - 0x20), 0);
+		x -= 10;
+	} else if (alpha_lock || alpha_armed) {
+		drect(x - 8, 0, x, 8, C_WHITE);
+		draw_cell(x - 7, 1, (uint16_t)('A' - 0x20), 0);
 		x -= 10;
 	}
-	if (shift_armed) {
-		ui_topbox(x - 8, 'S');
+
+	{
+		int g = cn_mode ? 5029 : 4701;	/* 中 / 英 */
+		drect(x - 8, 0, x, 8, C_WHITE);
+		draw_cell(x - 7, 1, (uint16_t)(CELL_CJK + g), 0);
 		x -= 10;
 	}
 	{
-		char const *m = cn_mode ? "中" : "英";
-		int g = gb_lookup((unsigned short)(cn_mode ? 0x4E2D : 0x82F1));
-		int w = (g >= 0) ? 8 : 8;
-		x -= (w + 1);
-		drect(x, 0, x + w - 1, 8, C_WHITE);
-		if (g >= 0)
-			draw_cell(x, 1, (uint16_t)(CELL_CJK + g), 0);
-		(void)m;
+		/* 大写 / 小写: F6 and SHIFT both act as a case lock */
+		int g = caps_on ? 1868 : 4418;
+		drect(x - 16, 0, x, 8, C_WHITE);
+		draw_cell(x - 15, 1, (uint16_t)(CELL_CJK + g), 0);
+		draw_cell(x - 7, 1, (uint16_t)(CELL_CJK + 4437), 0);
 	}
 }
 
 static void ui_title_state(char const *text, int show_input)
 {
 	drect(0, 0, 127, TITLE_H - 1, C_BLACK);
-	ui_clip_x = 62;		/* counter and state boxes live to the right */
+	/* Stop the title before whatever occupies the right end: the state
+	   boxes when editing, otherwise the page counter.  Both are measured
+	   from fixed budgets because the caller builds the counter string
+	   after the title. */
+	int clip;
+	if (show_input)
+		clip = 127 - 46 - 3;	/* A / S / 中英 / 大小写 */
+	else if (ui_info_right)
+		clip = 127 - 44 - 3;	/* reading page counter */
+	else
+		clip = 96 - 24 - 3;	/* list page item count */
+	if (clip < 24)
+		clip = 24;
+	ui_clip_x = clip;
 	draw_ui(3, 1, text, 1);
 	ui_clip_x = 128;
 	ui_top_state(show_input);
 }
 
+static int ui_show_input;	/* one-shot: draw the state boxes */
+
 static void ui_title(char const *text)
 {
+	if (ui_show_input) {
+		ui_show_input = 0;
+		ui_title_state(text, 1);
+		return;
+	}
 	ui_title_state(text, 0);
 }
+
+static int ui_no_cups;		/* prompt pages have no F-key cups */
 
 static void ui_status(char const *text)
 {
 	(void)text;			/* no toasts: the six boxes carry the hints */
+	if (ui_no_cups)
+		return;
 	ui_fkeys();
 }
 
@@ -389,76 +473,34 @@ static void draw_fname(int x, int y, char const *s, int invert)
 
 /*=== icons ================================================================*/
 
-static void icon_folder(int x, int y)
+static void blit_icon(unsigned char const *rows, int w, int h, int x, int y,
+                      int invert)
 {
-	drect(x + 1, y, x + 4, y, C_BLACK);
-	drect(x, y + 1, x + 6, y + 1, C_BLACK);
-	drect(x, y + 2, x + 6, y + 6, C_BLACK);
-	drect(x + 1, y + 3, x + 5, y + 5, C_WHITE);
-	drect(x + 2, y + 2, x + 3, y + 2, C_BLACK);
+	for (int r = 0; r < h; r++) {
+		unsigned char bits = rows[r];
+		for (int c = 0; c < w; c++)
+			if (bits & (1 << (6 - c))) {
+				if (invert)
+					px_off(x + c, y + r);
+				else
+					px_on(x + c, y + r);
+			}
+	}
 }
 
-static void icon_file(int x, int y)
+static void icon_folder(int x, int y, int invert)
 {
-	drect(x + 1, y, x + 4, y, C_BLACK);
-	drect(x, y + 1, x + 6, y + 6, C_BLACK);
-	drect(x + 1, y + 1, x + 5, y + 5, C_WHITE);
-	drect(x + 5, y + 1, x + 6, y + 1, C_BLACK);
-	drect(x + 6, y + 2, x + 6, y + 2, C_BLACK);
-	drect(x + 1, y + 3, x + 3, y + 3, C_BLACK);
-	drect(x + 1, y + 5, x + 3, y + 5, C_BLACK);
+	blit_icon(icon_folder_rows, icon_folder_w, icon_folder_h, x, y, invert);
+}
+
+static void icon_file(int x, int y, int invert)
+{
+	blit_icon(icon_file_rows, icon_file_w, icon_file_h, x, y, invert);
 }
 
 /*=== decoding =============================================================*/
 
-static int valid_utf8(unsigned char const *s, int n)
-{
-	int i = 0, multi = 0;
-	while (i < n) {
-		unsigned c = s[i];
-		if (c < 0x80) { i++; continue; }
-		int extra;
-		if ((c & 0xE0) == 0xC0) extra = 1;
-		else if ((c & 0xF0) == 0xE0) extra = 2;
-		else if ((c & 0xF8) == 0xF0) extra = 3;
-		else return 0;
-		if (i + extra >= n)
-			return 0;
-		for (int k = 1; k <= extra; k++)
-			if ((s[i + k] & 0xC0) != 0x80)
-				return 0;
-		multi++;
-		i += extra + 1;
-	}
-	return multi ? 1 : 0;
-}
 
-static int gb_lookup(unsigned short uni)
-{
-	int lo = 0, hi = GB_MAP_COUNT - 1;
-	while (lo <= hi) {
-		int mid = (lo + hi) / 2;
-		if (gb_uni[mid] == uni) return gb_idx[mid];
-		if (gb_uni[mid] < uni) lo = mid + 1;
-		else hi = mid - 1;
-	}
-	return -1;
-}
-
-static int utf8_seq(unsigned char const *s, int n, int i, unsigned *cp)
-{
-	unsigned c = s[i];
-	int extra;
-	if (c < 0x80) { *cp = c; return 1; }
-	if ((c & 0xE0) == 0xC0) { *cp = c & 0x1F; extra = 1; }
-	else if ((c & 0xF0) == 0xE0) { *cp = c & 0x0F; extra = 2; }
-	else if ((c & 0xF8) == 0xF0) { *cp = c & 0x07; extra = 3; }
-	else { *cp = '?'; return 1; }
-	if (i + extra >= n) { *cp = '?'; return 1; }
-	for (int k = 1; k <= extra; k++)
-		*cp = (*cp << 6) | (s[i + k] & 0x3F);
-	return extra + 1;
-}
 
 static void decode_into_cells(unsigned char const *s, int n)
 {
@@ -475,18 +517,6 @@ static void decode_into_cells(unsigned char const *s, int n)
 			continue;
 		}
 		if (c < 0x20) { i++; continue; }
-		if (enc_utf8) {
-			unsigned cp = 0;
-			int used = utf8_seq(s, n, i, &cp);
-			if (cp < 0x80) {
-				cells[ncell++] = (uint16_t)(cp - 0x20);
-			} else {
-				int gi = gb_lookup((unsigned short)cp);
-				cells[ncell++] = gi >= 0 ? (uint16_t)(CELL_CJK + gi) : 0;
-			}
-			i += used;
-			continue;
-		}
 		if (c >= 0x81 && i + 1 < n) {
 			unsigned char t = s[i + 1];
 			if (c >= 0xA1 && c <= 0xF7 && t >= 0xA1 && t <= 0xFE) {
@@ -514,25 +544,10 @@ static int encode_from_cells(unsigned char *out, int max)
 		if (cell == CELL_NL) { out[n++] = '\n'; continue; }
 		if (cell < CELL_CJK) { out[n++] = (unsigned char)(cell + 0x20); continue; }
 		int g = (int)cell - CELL_CJK;
-		if (enc_utf8) {
-			unsigned cp = (g >= 0 && g < FONT_GLYPHS) ? gb_rev[g] : 0;
-			if (!cp) { out[n++] = '?'; continue; }
-			if (cp < 0x800) {
-				if (n + 1 >= max) break;
-				out[n++] = 0xC0 | (cp >> 6);
-				out[n++] = 0x80 | (cp & 0x3F);
-			} else {
-				if (n + 2 >= max) break;
-				out[n++] = 0xE0 | (cp >> 12);
-				out[n++] = 0x80 | ((cp >> 6) & 0x3F);
-				out[n++] = 0x80 | (cp & 0x3F);
-			}
-		} else {
-			int qu = g / 94 + 1, wei = g % 94 + 1;
-			if (n + 1 >= max) break;
-			out[n++] = (unsigned char)(qu + 0xA0);
-			out[n++] = (unsigned char)(wei + 0xA0);
-		}
+		int qu = g / 94 + 1, wei = g % 94 + 1;
+		if (n + 1 >= max) break;
+		out[n++] = (unsigned char)(qu + 0xA0);
+		out[n++] = (unsigned char)(wei + 0xA0);
 	}
 	return n;
 }
@@ -625,6 +640,11 @@ static int line_count(void)
 /*=== session state (remember the last position) ===========================*/
 
 static void fs_list_dir(void);
+
+/* Set once the volume has been probed and the first listing is in memory.
+   The add-in image (and therefore this flag) survives a menu exit, so a
+   re-entry can skip the slow probe and show the previous screen at once. */
+static int app_ready;
 static void build_paths(void);
 static void fs_read_current(void);
 
@@ -638,6 +658,7 @@ typedef struct {
 	unsigned char big_font;
 	unsigned char has_file;
 	unsigned char reserved;
+	char root[16];
 	char dir[64];
 	char name[NAME_MAX_L + 1];
 	int view_top;
@@ -658,6 +679,8 @@ static int read_state(save_state_t *out)
 		f = fopen(alt, "rb");
 	}
 	if (!f)
+		f = fopen("\\\\fls0\\FXTXT.CFG", "rb");
+	if (!f)
 		return 0;
 	int n = (int)fread(out, 1, sizeof *out, f);
 	fclose(f);
@@ -673,6 +696,8 @@ static void write_state(void)
 		f = fopen(alt, "wb");
 	}
 	if (!f)
+		f = fopen("\\\\fls0\\FXTXT.CFG", "wb");
+	if (!f)
 		return;
 	fwrite(&st, 1, sizeof st, f);
 	fclose(f);
@@ -681,7 +706,10 @@ static void write_state(void)
 static void fill_state(void)
 {
 	memcpy(st.magic, STATE_MAGIC, 4);
-	st.version = 1;
+	st.version = 2;
+	memset(st.root, 0, sizeof st.root);
+	if (root_dev[0])
+		strncpy(st.root, root_dev, sizeof st.root - 1);
 	st.big_font = 0;
 	st.has_file = (mode == MODE_VIEW) && name_count > 0;
 	strncpy(st.dir, cur_dir, sizeof st.dir - 1);
@@ -818,6 +846,31 @@ static void fs_delete_path(char const *name)
 	(void)f;
 }
 
+/*=== buffer lifetime ======================================================
+
+   With gint_setrestart(1) the add-in can be parked in the OS menu and come
+   back. On this model the image (and .bss) is rebuilt on the way in while the
+   heap keeps what the previous instance allocated, so everything must be
+   handed back before control returns to the OS, otherwise the next launch
+   starts with the memory already gone. */
+
+static void app_release(void)
+{
+	free(cells);
+	free(rawbuf);
+	free(names);
+	free(names_fc);
+	free(is_dir);
+	cells = NULL;
+	rawbuf = NULL;
+	names = NULL;
+	names_fc = NULL;
+	is_dir = NULL;
+	text_max = 0;
+	name_count = 0;
+	app_ready = 0;
+}
+
 /*=== storage memory =======================================================*/
 
 /* Only .txt documents are listed (plus folders, so the tree stays navigable). */
@@ -837,13 +890,22 @@ static int fc_is_txt(uint16_t const *fc)
 	       (c3 == 't' || c3 == 'T');
 }
 
-/* Copy a raw path into a byte string (units above 0xFF become '?'). */
+/* Copy a raw FONTCHARACTER path into a byte string.  Units below 0x100 are
+   single bytes already (ASCII or GB2312 bytes); higher units are Unicode, which
+   is converted back to GB2312 so a Chinese name keeps its real two bytes. */
 static void fc_to_bytes(uint16_t const *fc, char *out, int outsz)
 {
-	int i = 0;
-	for (; fc[i] && i < outsz - 1; i++)
-		out[i] = (fc[i] < 0x100) ? (char)fc[i] : '?';
-	out[i] = 0;
+	int i = 0, k = 0;
+	for (; fc[i] && k < outsz - 2; i++) {
+		unsigned u = fc[i];
+		if (u < 0x100) {
+			out[k++] = (char)u;
+		} else {
+			out[k++] = '?';	/* wide units: no name mapping */
+			out[k++] = '?';
+		}
+	}
+	out[k] = 0;
 }
 
 static int name_is_txt(char const *n)
@@ -860,7 +922,7 @@ static int name_is_txt(char const *n)
 
 /* The storage volume is called "fls0", but the form accepted by opendir()
    differs between models/OS versions, so probe a few spellings once. */
-static char const *root_candidates[] = { "/fls0", "fls0", "/", "\\\\fls0", NULL };
+static char const *root_candidates[] = { "\\\\fls0", "/fls0", "fls0", "/", NULL };
 
 static int try_root(char const *cand)
 {
@@ -873,10 +935,19 @@ static int try_root(char const *cand)
 
 static void fs_probe_root(void)
 {
+	save_state_t s;
+
 	root_dev[0] = 0;
+	/* A rememberd volume works first time: this is what makes a re-launch
+	   quick instead of walking every spelling. */
+	if (read_state(&s) && s.version >= 2 && s.root[0] &&
+	    try_root(s.root)) {
+		strncpy(root_dev, s.root, sizeof root_dev - 1);
+		root_dev[sizeof root_dev - 1] = 0;
+	} else
 	/* The filesystem may only be mounted once it is first touched, so probe
 	   several spellings a few times before giving up. */
-	for (int attempt = 0; attempt < 3 && !root_dev[0]; attempt++) {
+	for (int attempt = 0; attempt < 1 && !root_dev[0]; attempt++) {
 		for (int i = 0; root_candidates[i]; i++) {
 			if (try_root(root_candidates[i])) {
 				strncpy(root_dev, root_candidates[i], sizeof root_dev - 1);
@@ -921,17 +992,39 @@ static void sort_entries(void)
 
 /* Convert an ASCII path ("/fls0/DIR") to a FONTCHARACTER pattern.
    The OS form always starts with a double backslash: "\\fls0\DIR\*". */
+/* Is the first path segment a known volume name ("fls0", "crd0", ...)? */
+static int first_seg_is_volume(char const *p)
+{
+	static char const *vols[] = { "fls0", "fls1", "crd0", "crd1", 0 };
+	for (int i = 0; vols[i]; i++) {
+		int n = strlen(vols[i]);
+		if (!strncmp(p, vols[i], n) &&
+		    (p[n] == 0 || p[n] == '/' || p[n] == '\\'))
+			return 1;
+	}
+	return 0;
+}
+
 static void to_fc_pattern(uint16_t *dst, int max)
 {
 	int j = 0;
 	int i = 0;
 	dst[j++] = '\\';
 	dst[j++] = '\\';
-	if (cur_dir[0] == '/')
-		i = 1;
+	/* cur_dir may be "/fls0", "\\fls0" or even "//fls0": drop every
+	   leading separator so exactly two are emitted below */
+	while (cur_dir[i] == '/' || cur_dir[i] == '\\')
+		i++;
+	if (!cur_dir[i] || !first_seg_is_volume(cur_dir + i)) {
+		char const *vol = "fls0";
+		for (char const *s = vol; *s && j < max - 4; s++)
+			dst[j++] = (uint16_t)(unsigned char)*s;
+		if (cur_dir[i])
+			dst[j++] = '\\';
+	}
 	for (; cur_dir[i] && j < max - 4; i++) {
 		unsigned char c = (unsigned char)cur_dir[i];
-		dst[j++] = (c == '/') ? '\\' : c;
+		dst[j++] = (c == '/' || c == '\\') ? '\\' : c;
 	}
 	dst[j++] = '\\';
 	dst[j++] = '*';
@@ -942,8 +1035,30 @@ static void to_fc_pattern(uint16_t *dst, int max)
    itself uses and it works before gint's stdio layer has been touched. */
 static void fs_list_dir_depth(int depth);
 
+/* Make sure cur_dir always uses the POSIX form "/fls0/..." internally. */
+static void normalise_cur_dir(void)
+{
+	if (cur_dir[0] != '/' && cur_dir[0] != '\\')
+		return;
+	int i = 0;
+	while (cur_dir[i] == '/' || cur_dir[i] == '\\')
+		i++;
+	if (i == 1 && cur_dir[0] == '/')
+		return;				/* already canonical */
+	char tmp[80];
+	int j = 0;
+	tmp[j++] = '/';
+	for (; cur_dir[i] && j < (int)sizeof tmp - 2; i++) {
+		unsigned char c = (unsigned char)cur_dir[i];
+		tmp[j++] = (c == '\\') ? '/' : c;
+	}
+	tmp[j] = 0;
+	strcpy(cur_dir, tmp);
+}
+
 static void fs_list_dir(void)
 {
+	normalise_cur_dir();
 	fs_list_dir_depth(0);
 }
 
@@ -1023,10 +1138,7 @@ static void fs_list_dir_depth(int depth)
 			if (found[i] == '\\')
 				last = i;
 		char base[NAME_MAX_L + 2];
-		int k = 0;
-		for (int i = last + 1; found[i] && k <= NAME_MAX_L; i++)
-			base[k++] = (found[i] < 0x100) ? (char)found[i] : '?';
-		base[k] = 0;
+		fc_to_bytes(found + last + 1, base, (int)sizeof base);
 		if (base[0] && strcmp(base, ".") && strcmp(base, "..")) {
 			int dir = (info.type == BFile_Type_Directory);
 			int txt = fc_is_txt(found);
@@ -1043,14 +1155,25 @@ static void fs_list_dir_depth(int depth)
 	if (handle)
 		BFile_FindClose(handle);
 
+	for (int i = first_real; i < name_count; i++) {
+		if (!strcmp(names[i], "fls0") || !strcmp(names[i], "crd0")) {
+			for (int k = i; k + 1 < name_count; k++) {
+				memcpy(names[k], names[k + 1], sizeof names[0]);
+				memcpy(names_fc[k], names_fc[k + 1], sizeof names_fc[0]);
+				is_dir[k] = is_dir[k + 1];
+			}
+			name_count--;
+			i--;
+		}
+	}
+
 	/* Drop the bogus volume row, then merge in whatever opendir can see:
 	   the search API is the only one reporting non-ASCII names, opendir is
 	   the more reliable one for plain files. */
 	int real = name_count - first_real;
-	int degenerate = 1;		/* always merge opendir results */
-	for (int i = first_real; i < name_count; i++)
-		if (is_dir[i] && !strcmp(names[i], "fls0"))
-			degenerate = 1;
+	/* The search API reports real file names (including Chinese ones) once the
+	   pattern carries a volume, so opendir is only a fallback now. */
+	int degenerate = (real == 0);
 
 	if (degenerate) {
 		/* remove the volume entry */
@@ -1090,17 +1213,48 @@ static void fs_list_dir_depth(int depth)
 	}
 
 	sort_entries();
-	snprintf(status_msg, sizeof status_msg, "%d 个", name_count - first_real);
+	snprintf(status_msg, sizeof status_msg, "%d \xB8\xF6", name_count - first_real);
+}
+
+/* Restore the position remembered for the file we have just opened. */
+static void apply_saved_pos(void)
+{
+	save_state_t s;
+	if (!read_state(&s) || !s.has_file || !s.name[0])
+		return;
+	if (strcmp(s.name, names[list_sel]) || strcmp(s.dir, cur_dir))
+		return;
+	int tl = line_count();
+	view_top = s.view_top;
+	if (view_top > tl - 1) view_top = tl - 1;
+	if (view_top < 0) view_top = 0;
+	cur_line = s.cur_line;
+	if (cur_line > tl - 1) cur_line = tl - 1;
+	if (cur_line < 0) cur_line = 0;
+	int len = line_len(line_start(cur_line));
+	cur_col = s.cur_col;
+	if (cur_col > len) cur_col = len;
+	if (cur_col < 0) cur_col = 0;
+	hscroll = s.hscroll < 0 ? 0 : s.hscroll;
 }
 
 static void fs_enter_dir(void)
 {
 	char next[64];
 	if (strlen(cur_dir) + strlen(names[list_sel]) + 2 > sizeof next) {
-		snprintf(status_msg, sizeof status_msg, "路径太长");
+		snprintf(status_msg, sizeof status_msg, "\xC2\xB7\xBE\xB6\xCC\xAB\xB3\xA4");
 		return;
 	}
-	snprintf(next, sizeof next, "%s/%s", cur_dir, names[list_sel]);
+	{
+		size_t j = 0;
+		for (size_t i = 0; cur_dir[i] && j + 1 < sizeof next; i++)
+			next[j++] = cur_dir[i];
+		if (j == 0 || next[j - 1] != '/')
+			next[j++] = '/';
+		for (size_t i = 0; names[list_sel][i] && j + 1 < sizeof next; i++)
+			next[j++] = names[list_sel][i];
+		next[j] = 0;
+	}
 	strncpy(cur_dir, next, sizeof cur_dir - 1);
 	cur_dir[sizeof cur_dir - 1] = 0;
 	fs_list_dir();
@@ -1109,9 +1263,11 @@ static void fs_enter_dir(void)
 static void fs_leave_dir(void)
 {
 	char *slash = strrchr(cur_dir, '/');
-	if (slash && slash != cur_dir)
-		*slash = 0;
-	if (!cur_dir[0] || !strchr(cur_dir, '/'))
+	if (slash == cur_dir)
+		cur_dir[0] = 0;		/* "/dir" -> "" (that is the root) */
+	else if (slash)
+		*slash = 0;		/* "/a/b" -> "/a" */
+	if (!cur_dir[0])
 		strcpy(cur_dir, root_dev);
 	fs_list_dir();
 }
@@ -1164,9 +1320,73 @@ static FILE *open_read(void) { return open_any(cur_path, "rb"); }
 static FILE *open_write(void) { return open_any(cur_path, "wb"); }
 
 /* Name prompt state */
-static char name_buf[16];
+static char name_buf[64];
 static int name_len;
-static int create_ok;
+static int name_pos;
+static int create_ok;		/* 1 = created (open it), 2 = renamed (back) */
+static int name_rename;		/* prompt is renaming the selected file */
+
+/* gint's fx port has no BFile_Rename syscall, so a rename is a copy followed
+   by a delete. Returns 0 on success, -2 when the file is too large to copy. */
+static int name_rename_copy(char const *oldn, char const *newn)
+{
+	char po[256], pn[256];
+	enum { CAP = 65536 };
+	snprintf(po, sizeof po, "%s/%s", cur_dir, oldn);
+	snprintf(pn, sizeof pn, "%s/%s", cur_dir, newn);
+
+	FILE *in = open_any(po, "rb");
+	if (!in)
+		return -1;
+	unsigned char *buf = malloc(CAP);
+	if (!buf) {
+		fclose(in);
+		return -1;
+	}
+	size_t n = fread(buf, 1, CAP, in);
+	fclose(in);
+	if (n >= CAP) {
+		free(buf);
+		return -2;
+	}
+	FILE *out = open_any(pn, "wb");
+	if (!out) {
+		free(buf);
+		return -1;
+	}
+	size_t w = fwrite(buf, 1, n, out);
+	fclose(out);
+	free(buf);
+	if (w != n)
+		return -1;
+	{
+		FILE *chk = open_any(pn, "rb");
+		if (!chk)
+			return -1;
+		fclose(chk);
+	}
+	fs_delete_path(oldn);
+	return 0;
+}
+
+/* Start renaming the selected entry: prefill the prompt with its base name. */
+static void name_begin_rename(void)
+{
+	if (name_count == 0)
+		return;
+	if (!strcmp(names[list_sel], "..") || is_dir[list_sel]) {
+		snprintf(status_msg, sizeof status_msg, "\xCE\xC4\xBC\xFE\xBC\xD0\xB2\xBB\xC4\xDC\xB8\xC4\xC3\xFB");
+		status_sticky = 1;
+		return;
+	}
+	snprintf(name_buf, sizeof name_buf, "%s", names[list_sel]);
+	size_t n = strlen(name_buf);
+	if (n > 4 && !strcmp(name_buf + n - 4, ".TXT"))
+		name_buf[n - 4] = 0;
+	name_len = (int)strlen(name_buf);
+	name_pos = name_len;
+	name_rename = 1;
+}
 
 /* Characters that may appear in a file name (FAT illegal set excluded). */
 static int name_char_ok(char c)
@@ -1202,7 +1422,8 @@ static void name_commit(void)
 	char clean[16], name[NAME_MAX_L + 1], path[256];
 	int n = 0;
 	create_ok = 0;
-	for (int i = 0; name_buf[i] && n < 12; i++) {
+	int cap = name_rename ? (NAME_MAX_L - 4) : 12;
+	for (int i = 0; name_buf[i] && n < cap; i++) {
 		char c = name_buf[i];
 		if (!name_char_ok(c))
 			continue;
@@ -1210,21 +1431,53 @@ static void name_commit(void)
 	}
 	clean[n] = 0;
 	if (!n) {
-		snprintf(status_msg, sizeof status_msg, "名字不能为空");
+		snprintf(status_msg, sizeof status_msg, "\xC3\xFB\xD7\xD6\xB2\xBB\xC4\xDC\xCE\xAA\xBF\xD5");
 		return;
 	}
 	snprintf(name, sizeof name, "%s.TXT", clean);
 	snprintf(path, sizeof path, "%s/%s", cur_dir, name);
 
+	if (name_rename) {
+		char oldn[NAME_MAX_L + 1];
+		int rc;
+		snprintf(oldn, sizeof oldn, "%s", names[list_sel]);
+		if (!strcmp(oldn, name)) {
+			name_rename = 0;
+			return;
+		}
+		name_rename = 0;
+		rc = name_rename_copy(oldn, name);
+		if (rc == -2) {
+			snprintf(status_msg, sizeof status_msg, "\xCE\xC4\xBC\xFE\xCC\xAB\xB4\xF3\xCE\xDE\xB7\xA8\xB8\xC4\xC3\xFB");
+			return;
+		}
+		if (rc != 0) {
+			snprintf(status_msg, sizeof status_msg, "\xB8\xC4\xC3\xFB\xCA\xA7\xB0\xDC");
+			return;
+		}
+		fs_list_dir();
+		for (int i = 0; i < name_count; i++)
+			if (!strcmp(names[i], name)) {
+				list_sel = i;
+				break;
+			}
+		if (list_sel < list_top)
+			list_top = list_sel;
+		if (list_sel >= list_top + 5)
+			list_top = list_sel - 4;
+		create_ok = 2;
+		return;
+	}
+
 	FILE *f = open_any(path, "rb");
 	if (f) {
 		fclose(f);
-		snprintf(status_msg, sizeof status_msg, "已存在同名文件");
+		snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xB4\xE6\xD4\xDA\xCD\xAC\xC3\xFB\xCE\xC4\xBC\xFE");
 		return;
 	}
 	f = open_any(path, "wb");
 	if (!f) {
-		snprintf(status_msg, sizeof status_msg, "新建失败");
+		snprintf(status_msg, sizeof status_msg, "\xD0\xC2\xBD\xA8\xCA\xA7\xB0\xDC");
 		return;
 	}
 	fclose(f);
@@ -1237,7 +1490,7 @@ static void name_commit(void)
 			break;
 		}
 	if (idx < 0) {
-		snprintf(status_msg, sizeof status_msg, "新建失败");
+		snprintf(status_msg, sizeof status_msg, "\xD0\xC2\xBD\xA8\xCA\xA7\xB0\xDC");
 		return;
 	}
 	list_sel = idx;
@@ -1248,39 +1501,89 @@ static void name_commit(void)
 	view_top = 0;
 	edit_mode = 1;
 	dirty = 0;
-	enc_utf8 = 0;
 	py_reset();
-	snprintf(status_msg, sizeof status_msg, "新建 %s", name);
+	snprintf(status_msg, sizeof status_msg, "\xD0\xC2\xBD\xA8 %s", name);
 	status_sticky = 1;
 	create_ok = 1;
 }
 
 static void draw_name(void)
 {
-	ui_title("新建文档");
+	ui_no_cups = 1;
+	name_len = (int)strlen(name_buf);
+	if (name_pos > name_len)
+		name_pos = name_len;
+	if (name_pos < 0)
+		name_pos = 0;
+	ui_title(name_rename ? "\xD6\xD8\xC3\xFC\xC3\xFB"
+	                     : "\xD0\xC2\xBD\xA8\xCE\xC4\xB5\xB5");
 	int y = CONTENT_Y + 2;
 	char line[64];
-	snprintf(line, sizeof line, "目录 %s", cur_dir);
+	snprintf(line, sizeof line, "\xC4\xBF\xC2\xBC %s", cur_dir);
 	draw_ui(2, y, line, 0);
 	y += 10;
-	draw_ui(2, y, "名称", 0);
-	int x = draw_ui(28, y, name_buf, 0);
-	for (int k = 0; k < 7; k++)
-		px_on(x + 1, y + k);
+	draw_ui(2, y, "\xC3\xFB\xB3\xC6", 0);
+	{
+		/* split at the caret so it shows where typing will happen */
+		char head[64], rest[64];
+		int n = name_pos;
+		if (n > name_len)
+			n = name_len;
+		if (n < 0)
+			n = 0;
+		memcpy(head, name_buf, (size_t)n);
+		head[n] = 0;
+		snprintf(rest, sizeof rest, "%s", name_buf + n);
+		int x = draw_ui(28, y, head, 0);
+		for (int k = 0; k < 7; k++)
+			px_on(x + 1, y + k);
+		draw_ui(x + 3, y, rest, 0);
+	}
 	y += 10;
-	draw_ui(2, y, case_upper ? "大写 F1切换  自动加 .TXT"
-	                        : "小写 F1切换  自动加 .TXT", 0);
-	ui_hints("ALPH字母 EXE建 EXIT退", "", 1);
+	{
+		char const *tail = name_rename
+			? ""			/* an existing extension is kept as it is */
+			: (case_upper
+			   ? "\xB4\xF3\xD0\xB4 F1\xC7\xD0\xBB\xBB  \xD7\xD4\xB6\xAF\xBC\xD3 .TXT"
+			   : "\xD0\xA1\xD0\xB4 F1\xC7\xD0\xBB\xBB  \xD7\xD4\xB6\xAF\xBC\xD3 .TXT");
+		if (tail[0])
+			draw_ui(2, y, tail, 0);
+		else
+			draw_ui(2, y, case_upper
+			        ? "\xB4\xF3\xD0\xB4 F1\xC7\xD0\xBB\xBB"
+			        : "\xD0\xA1\xD0\xB4 F1\xC7\xD0\xBB\xBB", 0);
+	}
+	ui_hints(name_rename ? "ALPH\xD7\xD6\xC4\xB8 EXE\xB8\xC4 EXIT\xCD\xCB"
+	                     : "ALPH\xD7\xD6\xC4\xB8 EXE\xBD\xA8 EXIT\xCD\xCB", "", 1);
 	dupdate();
 }
 
 static void handle_name_key(key_event_t ev)
 {
+	name_len = (int)strlen(name_buf);
+	if (name_pos > name_len)
+		name_pos = name_len;
 
+	if (ev.key == KEY_EXIT) {		/* always leave this page */
+		mode = MODE_LIST;
+		return;
+	}
+
+	if (ev.key == KEY_LEFT || ev.key == KEY_RIGHT) {
+		/* must come before the "plain key is a character" fallback,
+		   which would otherwise swallow the arrow */
+		if (ev.key == KEY_LEFT) {
+			if (name_pos > 0)
+				name_pos--;
+		} else if (name_pos < name_len) {
+			name_pos++;
+		}
+		return;
+	}
 	if (ev.key == KEY_F1) {
 		case_upper = !case_upper;
 		snprintf(status_msg, sizeof status_msg,
-		         case_upper ? "大写字母" : "小写字母");
+		         case_upper ? "\xB4\xF3\xD0\xB4\xD7\xD6\xC4\xB8" : "\xD0\xA1\xD0\xB4\xD7\xD6\xC4\xB8");
 		status_sticky = 1;
 		return;
 	}
@@ -1298,29 +1601,49 @@ static void handle_name_key(key_event_t ev)
 		if (case_upper && c >= 'a' && c <= 'z')
 			c = (char)(c - 32);
 		if (!name_char_ok(c)) {
-			snprintf(status_msg, sizeof status_msg, "该符号不能做文件名");
+			snprintf(status_msg, sizeof status_msg, "\xB8\xC3\xB7\xFB\xBA\xC5\xB2\xBB\xC4\xDC\xD7\xF6\xCE\xC4\xBC\xFE\xC3\xFB");
 			status_sticky = 1;
 			return;
 		}
 		if (name_len < (int)sizeof name_buf - 1) {
-			name_buf[name_len++] = c;
+			for (int i = name_len; i > name_pos; i--)
+				name_buf[i] = name_buf[i - 1];
+			name_buf[name_pos] = c;
+			name_len++;
+			name_pos++;
 			name_buf[name_len] = 0;
 		}
 		return;
 	}
 
 	switch (ev.key) {
+	case KEY_LEFT:
+		if (name_pos > 0)
+			name_pos--;
+		return;
+	case KEY_RIGHT:
+		if (name_pos < name_len)
+			name_pos++;
+		return;
 	case KEY_DEL:
 	case KEY_F2:
-		if (name_len > 0)
-			name_buf[--name_len] = 0;
+		if (name_pos > 0) {
+			for (int i = name_pos - 1; i < name_len; i++)
+				name_buf[i] = name_buf[i + 1];
+			name_len--;
+			name_pos--;
+		}
 		return;
 	case KEY_EXE:
 		gint_world_switch(GINT_CALL(name_commit));
-		if (create_ok)
+		if (create_ok == 1)
 			mode = MODE_VIEW;
+		else if (create_ok == 2)
+			mode = MODE_LIST;
 		return;
 	case KEY_EXIT:
+		/* leaving the document: remember this file's position */
+		gint_world_switch(GINT_CALL(fs_save_state));
 		mode = MODE_LIST;
 		return;
 	default:
@@ -1333,19 +1656,18 @@ static void fs_read_current(void)
 	ncell = 0;
 	FILE *f = open_read();
 	if (!f) {
-		snprintf(status_msg, sizeof status_msg, "打不开");
+		snprintf(status_msg, sizeof status_msg, "\xB4\xF2\xB2\xBB\xBF\xAA");
 		return;
 	}
 	int n = (int)fread(rawbuf, 1, text_max, f);
 	int clipped = (n == text_max) && (fgetc(f) != EOF);
 	fclose(f);
 	if (n < 0) n = 0;
-	enc_utf8 = valid_utf8(rawbuf, n);
 	decode_into_cells(rawbuf, n);
 	if (clipped)
-		snprintf(status_msg, sizeof status_msg, "超出%dK", text_max / 1024);
+		snprintf(status_msg, sizeof status_msg, "\xB3\xAC\xB3\xF6%dK", text_max / 1024);
 	else
-		snprintf(status_msg, sizeof status_msg, "%d字节 %s", n, enc_utf8 ? "UTF8" : "GB");
+		snprintf(status_msg, sizeof status_msg, "%d\xD7\xD6\xBD\xDA GB", n);
 }
 
 /* Re-read the open file and decode it with the forced encoding. */
@@ -1366,7 +1688,7 @@ static void fs_redecode(void)
 		cur_line = line_count() - 1;
 	if (cur_line < 0)
 		cur_line = 0;
-	snprintf(status_msg, sizeof status_msg, "%d B %s", n, enc_utf8 ? "UTF8" : "GB");
+	snprintf(status_msg, sizeof status_msg, "%d B GB", n);
 }
 
 static char relist_name[NAME_MAX_L + 1];
@@ -1391,13 +1713,13 @@ static void fs_write_current(void)
 	int n = encode_from_cells(rawbuf, text_max);
 	FILE *f = open_write();
 	if (!f) {
-		snprintf(status_msg, sizeof status_msg, "存不了");
+		snprintf(status_msg, sizeof status_msg, "\xB4\xE6\xB2\xBB\xC1\xCB");
 		return;
 	}
 	fwrite(rawbuf, 1, n, f);
 	fclose(f);
 	dirty = 0;
-	snprintf(status_msg, sizeof status_msg, "已存 %d 字节", n);
+	snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xB4\xE6 %d \xD7\xD6\xBD\xDA", n);
 }
 
 static void fs_make_demo(void)
@@ -1463,7 +1785,7 @@ static void fs_make_demo(void)
 			fclose(f);
 		}
 	}
-	snprintf(status_msg, sizeof status_msg, "示例已建好");
+	snprintf(status_msg, sizeof status_msg, "\xCA\xBE\xC0\xFD\xD2\xD1\xBD\xA8\xBA\xC3");
 	fs_list_dir();
 }
 
@@ -1471,13 +1793,14 @@ static void fs_make_demo(void)
 
 static void draw_list(void)
 {
+	ui_no_cups = 0;
 	char head[24];
 	char const *folder = strrchr(cur_dir, '/');
 	folder = (folder && folder[1]) ? folder + 1 : "fls0";
-	snprintf(head, sizeof head, "FXTXT 文本 - %s", folder);
+	snprintf(head, sizeof head, "FXTXT - %s", folder);
 	ui_title(head);
 
-	static char const *lab_list[6] = { "新建", "上次", "", "", "", "帮助" };
+	static char const *lab_list[6] = { "\xD0\xC2\xBD\xA8", "\xB8\xC4\xC3\xFB", "", "", "", "\xB0\xEF\xD6\xFA" };
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = lab_list[i];
 
@@ -1495,9 +1818,9 @@ static void draw_list(void)
 		if (sel)
 			drect(0, y - 1, TEXT_W - 1, y + 7, C_BLACK);
 		if (is_dir[idx])
-			icon_folder(1, y);
+			icon_folder(1, y, sel);
 		else
-			icon_file(1, y);
+			icon_file(1, y, sel);
 		draw_fname(10, y, names[idx], sel ? 1 : 0);
 		y += 9;
 	}
@@ -1507,7 +1830,8 @@ static void draw_list(void)
 	{
 		char info[16];
 		int n = name_count - (strcmp(cur_dir, root_dev) ? 1 : 0);
-		snprintf(info, sizeof info, "%d 个", n);
+		snprintf(info, sizeof info, "%d \xB8\xF6", n);
+		ui_info_right = 1;	/* the count sits at the very right */
 		ui_hints(hint_list, info, 0);
 	}
 	dupdate();
@@ -1524,12 +1848,12 @@ static void comp_draw(void)
 	for (char const *p = py_buf; *p; p++)
 		x += font_adv8[(unsigned char)*p - FONT_FIRST];
 	if (!py_len) {
-		ui_status("ALPHA+键打字母");
+		ui_status("ALPHA+\xBC\xFC\xB4\xF2\xD7\xD6\xC4\xB8");
 		return;
 	}
 	int n = py_candidates();
 	if (n <= 0) {
-		draw_ui(x + 6, STATUS_Y, "无匹配", 0);
+		draw_ui(x + 6, STATUS_Y, "\xCE\xDE\xC6\xA5\xC5\xE4", 0);
 		return;
 	}
 	int room = (127 - 44) / 10;
@@ -1553,9 +1877,14 @@ static void comp_draw(void)
 
 static void draw_view(void)
 {
+	ui_no_cups = 0;
 	int rows_total = row_count();
-	if (view_top > rows_total - 1) view_top = rows_total - 1;
-	if (view_top < 0) view_top = 0;
+	{
+		int lim = rows_total - rows();
+		if (lim < 0) lim = 0;
+		if (view_top > lim) view_top = lim;
+		if (view_top < 0) view_top = 0;
+	}
 
 	char head[40];
 	snprintf(head, sizeof head, "%s%s", edit_mode ? "*" : "", names[list_sel]);
@@ -1571,8 +1900,8 @@ static void draw_view(void)
 		if (crow >= view_top + rows()) view_top = crow - rows() + 1;
 	}
 
-	static char const *lab_read[6] = { "", "查找", "编辑", "", "", "帮助" };
-	static char const *lab_edit[6] = { "保存", "", "退出", "标点", "中英", "帮助" };
+	static char const *lab_read[6] = { "", "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA" };
+	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xB2\xE9\xD5\xD2", "\xCD\xCB\xB3\xF6", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = edit_mode ? lab_edit[i] : lab_read[i];
 
@@ -1583,10 +1912,14 @@ static void draw_view(void)
 		int q = next_row(p);
 		int x = 0;
 		int caretx = -1;
+		int hl = -1;
+		if (!edit_mode && search_n > 0)
+			hl = search_hits[search_cur];
 		for (int c = p; c < q; c++) {
 			if (edit_mode && c == ccell)
 				caretx = x;
-			draw_cell(x, y, cells[c], 0);
+			int inv = (hl >= 0 && c >= hl && c < hl + search_len);
+			draw_cell(x, y, cells[c], inv);
 			x += cell_adv(cells[c]);
 		}
 		if (edit_mode && row == crow && ccell >= q &&
@@ -1597,18 +1930,33 @@ static void draw_view(void)
 		y += lh();
 	}
 
-	if (caret_x >= 0) {
-		for (int k = 0; k < lh() - 1; k++)
+	/* the caret blinks: while the phase is off the cell stays empty */
+	if (caret_x >= 0 && blink_on) {
+		/* two pixels wide, otherwise the 1 px line looks grey on the LCD */
+		for (int k = 0; k < lh() - 1; k++) {
 			px_on(caret_x, caret_y + k);
+			px_on(caret_x + 1, caret_y + k);
+		}
 	}
 
 	if (edit_mode && py_len > 0) {
 		comp_draw();
 	} else {
 		char info[16];
-		snprintf(info, sizeof info, "%d/%d", view_top + 1, rows_total);
+		info[0] = 0;
+		ui_info_right = 0;
+		if (!edit_mode) {
+			if (search_n > 0)
+				snprintf(info, sizeof info, "%d/%d",
+				         search_cur + 1, search_n);
+			else
+				snprintf(info, sizeof info, "%d/%d",
+				         view_top + 1, rows_total);
+			ui_info_right = 1;
+		}
 		ui_hints(edit_mode ? (cn_mode ? hint_edit_cn : hint_edit_en) : hint_view, info,
 		         edit_mode);
+		ui_info_right = 0;
 	}
 	dupdate();
 }
@@ -1658,7 +2006,7 @@ static char alpha_symbol(int key)
 	if (key == KEY_DOT)
 		return ' ';		/* 空格键 = [.] */
 	if (key == KEY_EXP)
-		return '"';		/* 引号键 = [x10^x] */
+		return '"';		/* \xD2\xFD\xBA\xC5\xBC\xFC = [x10^x] */
 	return 0;
 }
 
@@ -1745,25 +2093,27 @@ static void py_refresh(void)
 /* Cell of the n-th punctuation mark (0 if the index runs past the list). */
 static uint16_t punct_cell(int n)
 {
-	int total = (int)strlen(punct_list);
-	int off = punct_offset(n);
-	if (off >= total)
+	if (n < 0 || n >= PUNCT_COUNT || !punct_gb[n * 2])
 		return 0;
-	unsigned cp = 0;
-	int used = utf8_seq((unsigned char const *)punct_list, total, off, &cp);
-	if (!used)
-		return 0;
-	int g = gb_lookup((unsigned short)cp);
-	return (g >= 0) ? (uint16_t)(CELL_CJK + g) : 0;
+	int g = (punct_gb[n * 2] - 0xA1) * 94 + (punct_gb[n * 2 + 1] - 0xA1);
+	return (g >= 0 && g < FONT_GLYPHS) ? (uint16_t)(CELL_CJK + g) : 0;
 }
 
 /*=== search prompt ========================================================*/
 
 static void draw_search(void)
 {
-	ui_title("搜索");
+	ui_no_cups = 0;
+	ui_show_input = 1;
+	ui_title("\xCB\xD1\xCB\xF7");
+	for (int i = 0; i < 6; i++)
+		box_lab[i] = 0;
+	box_lab[0] = "\xC9\xCF\xD2\xBB";		/* F1  上一条 */
+	box_lab[2] = "\xCF\xC2\xD2\xBB";		/* F3  下一条 */
+	box_lab[3] = "\xB2\xE9\xD5\xD2";		/* F4  查找 */
+	box_lab[5] = "\xB0\xEF\xD6\xFA";		/* F6  帮助 */
 	int y = CONTENT_Y + 2;
-	draw_ui(2, y, "查找", 0);
+	draw_ui(2, y, "\xB2\xE9\xD5\xD2", 0);
 	int x = 30;
 	for (int i = 0; i < search_len && x < 120; i++) {
 		draw_cell(x, y, search_cells[i], 0);
@@ -1794,12 +2144,31 @@ static void draw_search(void)
 			cx += 10;
 		}
 	}
-	ui_hints(py_len ? "EXE上屏 ←→选" : "EXE搜索 EXIT退", "", 1);
+	ui_hints(py_len ? "EXE\xC9\xCF\xC6\xC1 \xA1\xFB\xA1\xFA\xD1\xA1" : "EXE\xCB\xD1\xCB\xF7 EXIT\xCD\xCB", "", 1);
 	dupdate();
 }
 
 static void handle_search_key(key_event_t ev)
 {
+	if (py_len == 0) {
+		if (ev.key == KEY_F1 || ev.key == KEY_F3) {
+			if (search_n > 0) {
+				search_cur = (search_cur +
+				              (ev.key == KEY_F1 ? search_n - 1 : 1)) % search_n;
+				search_show();
+				mode = MODE_VIEW;
+			}
+			return;
+		}
+		if (ev.key == KEY_F4) {
+			build_search_cells();
+			if (search_len) {
+				run_search();
+				mode = MODE_VIEW;
+			}
+			return;
+		}
+	}
 	if (py_len > 0) {
 		int n = py_candidates();
 		switch (ev.key) {
@@ -1926,12 +2295,19 @@ static void text_newline(void)
 static void text_backspace(void)
 {
 	int off = line_start(cur_line) + cur_col;
+
 	if (off <= 0 || ncell <= 0)
 		return;
 	memmove(cells + off - 1, cells + off, (ncell - off) * sizeof(uint16_t));
 	ncell--;
-	if (cur_col > 0)
+	if (cur_col > 0) {
 		cur_col--;
+	} else if (cur_line > 0) {
+		/* joined with the previous line: caret lands on the join point */
+		cur_line--;
+		cur_col = (off - 1) - line_start(cur_line);
+		if (cur_col < 0) cur_col = 0;
+	}
 	dirty = 1;
 }
 
@@ -1946,20 +2322,28 @@ static void kb_put(uint16_t cell)
 	text_insert(cell);
 }
 
-/* ASCII punctuation -> its GB2312 full-width counterpart (qu 1). */
+/* ASCII punctuation -> its full-width counterpart, resolved through the
+   Unicode -> glyph table (the full-width forms live in GB2312 row 3, not 1). */
 static uint16_t kb_fullwidth(uint16_t cell)
 {
-	static unsigned char const map[][2] = {
-		{',', 0xAC}, {'.', 0xAE}, {':', 0xBA}, {';', 0xBB},
-		{'?', 0xBF}, {'!', 0xA1}, {'(', 0xA8}, {')', 0xA9},
-		{'[', 0xDB}, {']', 0xDC}, {'{', 0xFB}, {'}', 0xFC},
+	static unsigned char const map[][3] = {
+	{',', 0xA3, 0xAC}, {'.', 0xA1, 0xA3},
+	{':', 0xA3, 0xBA}, {';', 0xA3, 0xBB},
+	{'?', 0xA3, 0xBF}, {'!', 0xA3, 0xA1},
+	{'(', 0xA3, 0xA8}, {')', 0xA3, 0xA9},
+	{'[', 0xA3, 0xDB}, {']', 0xA3, 0xDD},
+	{'{', 0xA3, 0xFB}, {'}', 0xA3, 0xFD},
 	};
 	if (cell >= CELL_CJK)
 		return cell;
 	char c = (char)(cell + 0x20);
-	for (unsigned i = 0; i < sizeof map / sizeof map[0]; i++)
-		if ((char)map[i][0] == c)
-			return (uint16_t)(CELL_CJK + ((int)map[i][1] - 0xA1));
+	for (unsigned i = 0; i < sizeof map / sizeof map[0]; i++) {
+		if ((char)map[i][0] == c) {
+			int g = (map[i][1] - 0xA1) * 94 + (map[i][2] - 0xA1);
+			if (g >= 0 && g < FONT_GLYPHS)
+				return (uint16_t)(CELL_CJK + g);
+		}
+	}
 	return cell;
 }
 
@@ -1983,11 +2367,27 @@ static void kb_backspace(void)
 
 static void draw_keyboard(void)
 {
+	ui_no_cups = 0;
+	for (int i = 0; i < 6; i++)
+		box_lab[i] = 0;
 	int pinyin = (kb_page == PAGE_PINYIN);
 	int punct = (kb_page == PAGE_PUNCT);
-	ui_title(punct ? "标点符号"
-	               : pinyin ? (kb_target == 1 ? "拼音搜索" : "拼音输入")
-	                        : (kb_target == 1 ? "搜索文字" : "插入字符"));
+	if (punct) {
+		box_lab[0] = "\xBB\xBB\xD2\xB3";	/* 换页 */
+		box_lab[5] = "\xCD\xEA\xB3\xC9";	/* 完成 */
+	} else if (pinyin) {
+		box_lab[0] = "\xBB\xBB\xD2\xB3";
+		box_lab[2] = "\xCF\xC2\xD1\xA1";	/* 下选 */
+		box_lab[3] = "\xC9\xCF\xD1\xA1";	/* 上选 */
+		box_lab[4] = "\xC9\xCF\xC6\xC1";	/* 上屏 */
+		box_lab[5] = "\xCD\xEA\xB3\xC9";
+	} else {
+		box_lab[0] = "\xBB\xBB\xD2\xB3";
+		box_lab[5] = "\xCD\xEA\xB3\xC9";
+	}
+	ui_title(punct ? "\xB1\xEA\xB5\xE3\xB7\xFB\xBA\xC5"
+	               : pinyin ? (kb_target == 1 ? "\xC6\xB4\xD2\xF4\xCB\xD1\xCB\xF7" : "\xC6\xB4\xD2\xF4\xCA\xE4\xC8\xEB")
+	                        : (kb_target == 1 ? "\xCB\xD1\xCB\xF7\xCE\xC4\xD7\xD6" : "\xB2\xE5\xC8\xEB\xD7\xD6\xB7\xFB"));
 
 	int grid_y;
 	if (pinyin) {
@@ -1996,7 +2396,7 @@ static void draw_keyboard(void)
 		if (py_len)
 			snprintf(line, sizeof line, "%s_", py_buf);
 		else
-			snprintf(line, sizeof line, "输入拼音");
+			snprintf(line, sizeof line, "\xCA\xE4\xC8\xEB\xC6\xB4\xD2\xF4");
 		draw_ui(2, CONTENT_Y + 1, line, 0);
 
 		/* candidate row */
@@ -2021,7 +2421,7 @@ static void draw_keyboard(void)
 				x += 11;
 			}
 		} else if (py_len) {
-			draw_ui(2, y, "无匹配", 0);
+			draw_ui(2, y, "\xCE\xDE\xC6\xA5\xC5\xE4", 0);
 		}
 		grid_y = CONTENT_Y + 22;
 	} else {
@@ -2029,7 +2429,7 @@ static void draw_keyboard(void)
 	}
 
 	int gc = kb_cols();
-	int gr = (pinyin || punct) ? 2 : 5;
+	int gr = punct ? 3 : (pinyin ? 2 : 5);
 	for (int r = 0; r < gr; r++) {
 		for (int c = 0; c < gc; c++) {
 			char ch = kb_char(r, c);
@@ -2059,11 +2459,11 @@ static void draw_keyboard(void)
 		for (int k = 0; k < 7; k++)
 			px_on(x + 1, STATUS_Y + k);
 	} else if (pinyin) {
-		ui_status(py_candidates() ? "F3/F4 选字   F5 上屏" : "F1 换页   F6 完成");
+		ui_status(py_candidates() ? "F3/F4 \xD1\xA1\xD7\xD6   F5 \xC9\xCF\xC6\xC1" : "F1 \xBB\xBB\xD2\xB3   F6 \xCD\xEA\xB3\xC9");
 	} else if (punct) {
-		ui_status("EXE 输入   F1 换页   F6 完成");
+		ui_status("EXE \xCA\xE4\xC8\xEB   F1 \xBB\xBB\xD2\xB3   F6 \xCD\xEA\xB3\xC9");
 	} else {
-		ui_status("F1 换页   F6 完成");
+		ui_status("F1 \xBB\xBB\xD2\xB3   F6 \xCD\xEA\xB3\xC9");
 	}
 	dupdate();
 }
@@ -2079,44 +2479,41 @@ static int help_page;
 
 static void draw_help(void)
 {
+	ui_no_cups = 0;
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = 0;
 	static char const *page1[] = {
-		"↑↓   选择文件",
-		"EXE  打开 / 进入",
-		"      .. 返回上级",
-		"F1   新建文档",
-		"F2   回到上次位置",
+		"\xA1\xFC\xA1\xFD \xD1\xA1\xD4\xF1  EXE \xB4\xF2\xBF\xAA",
+		"F1 \xD0\xC2\xBD\xA8  F2 \xB8\xC4\xC3\xFB",
+		"DEL \xC9\xBE\xB3\xFD  F6 \xB0\xEF\xD6\xFA",
+		"EXIT \xB7\xB5\xBB\xD8\xC9\xCF\xBC\xB6",
 	};
 	static char const *page2[] = {
-		"↑↓ 滚动   ←→ 翻页",
-		"F2   搜索文字",
-		"F3   进入编辑",
-		"F4   （预留）",
-		"F6   帮助   EXIT 返回",
+		"\xA1\xFC\xA1\xFD \xB9\xF6\xB6\xAF   \xA1\xFB\xA1\xFA \xB7\xAD\xD2\xB3",
+		"F2 \xB2\xE9\xD5\xD2\xCE\xC4\xD7\xD6",
+		"F3 \xBD\xF8\xC8\xEB\xB1\xE0\xBC\xAD",
+		"EXIT \xB7\xB5\xBB\xD8\xC1\xD0\xB1\xED",
 	};
 	static char const *page3[] = {
-		"F1保存  F3退出编辑",
-		"F4标点  F5中/英",
-		"EXE换行 DEL删字",
-		"ALPHA小写 SHIFT大写",
-		"SHIFT+ALPHA 字母锁",
+		"F1 \xB1\xA3\xB4\xE6   F3 \xCD\xCB\xB3\xF6",
+		"F4 \xB1\xEA\xB5\xE3   F5 \xD6\xD0\xD3\xA2",
+		"EXE \xBB\xBB\xD0\xD0  DEL \xC9\xBE\xD7\xD6",
+		"ALPHA \xD7\xD6\xC4\xB8  F6 \xB4\xF3\xD0\xB4",
 	};
-	static char const *titles[] = { "列表页", "阅读页", "编辑页" };
+	static char const *titles[] = { "\xC1\xD0\xB1\xED\xD2\xB3", "\xD4\xC4\xB6\xC1\xD2\xB3", "\xB1\xE0\xBC\xAD\xD2\xB3" };
 	char const **lines = help_page == 0 ? page1 : (help_page == 1 ? page2 : page3);
 	char head[32];
-	snprintf(head, sizeof head, "帮助 %d/3", help_page + 1);
+	snprintf(head, sizeof head, "\xB0\xEF\xD6\xFA %d/3", help_page + 1);
 	ui_title(head);
-	draw_ui(2, CONTENT_Y - 9 + 45, "", 0);	/* no-op: keeps the layout stable */
 
-	/* page name on the first content line */
+	/* page name on the first content line, then four key lines */
 	draw_ui(2, CONTENT_Y, titles[help_page], 0);
 
 	int y = CONTENT_Y + 9;
 	for (int i = 0; i < 4; i++, y += 9)
 		draw_ui(2, y, lines[i], 0);
 
-	ui_hints("←→ 翻页  EXIT 关闭", "", 0);
+	ui_hints("\xA1\xFB\xA1\xFA \xB7\xAD\xD2\xB3  EXIT \xB9\xD8\xB1\xD5", "", 0);
 	dupdate();
 }
 
@@ -2127,6 +2524,50 @@ static void build_search_cells(void)
 	search_len = 0;
 	for (int i = 0; i < kb_len && search_len < 31; i++)
 		search_cells[search_len++] = kb_cells[i];
+}
+
+/* Store every occurrence of the query, remembering where the caret is. */
+static void search_collect(void)
+{
+	search_n = 0;
+	search_cur = 0;
+	if (!search_len)
+		return;
+	int here = line_start(cur_line) + cur_col;
+
+	for (int i = 0; i + search_len <= ncell && search_n < SEARCH_MAX_HITS; i++) {
+		int k = 0;
+		while (k < search_len && cells[i + k] == search_cells[k])
+			k++;
+		if (k != search_len)
+			continue;
+		search_hits[search_n++] = i;
+		if (i < here)
+			search_cur = search_n;	/* the next one is the first after us */
+	}
+	if (search_cur >= search_n)
+		search_cur = 0;
+}
+
+/* Show match #search_cur and put the caret right behind it. */
+static void search_show(void)
+{
+	if (!search_n)
+		return;
+	int hit = search_hits[search_cur];
+	cur_line = offset_to_line(hit);
+	cur_col = hit - line_start(cur_line) + search_len;
+	int llen = line_len(line_start(cur_line));
+	if (cur_col > llen)
+		cur_col = llen;
+	view_top = row_of_cell(hit);
+	if (view_top > row_count() - rows())
+		view_top = row_count() - rows();
+	if (view_top < 0)
+		view_top = 0;
+	hscroll = 0;
+	snprintf(status_msg, sizeof status_msg, "ÃüÖÐ%d %d/%d",
+	         search_n, search_cur + 1, search_n);
 }
 
 static int find_cells(int from)
@@ -2150,18 +2591,12 @@ static int offset_to_line(int off)
 
 static void run_search(void)
 {
-	build_search_cells();
-	int hit = find_cells(line_start(cur_line) + cur_col + 1);
-	if (hit < 0) hit = find_cells(0);
-	if (hit < 0) {
-		snprintf(status_msg, sizeof status_msg, "没找到");
+	search_collect();
+	if (!search_n) {
+		snprintf(status_msg, sizeof status_msg, "\xC3\xBB\xD5\xD2\xB5\xBD");
 		return;
 	}
-	cur_line = offset_to_line(hit);
-	cur_col = hit - line_start(cur_line);
-	view_top = cur_line;
-	hscroll = cur_col > 4 ? cur_col - 4 : 0;
-	snprintf(status_msg, sizeof status_msg, "找到了");
+	search_show();
 }
 
 /*=== input ================================================================*/
@@ -2179,6 +2614,67 @@ static void move_cursor_line(int delta)
 	if (cur_line >= view_top + rows()) view_top = cur_line - rows() + 1;
 }
 
+static int row_start_of(int p)
+{
+	int q = 0;
+
+	while (q < ncell) {
+		int n = next_row(q);
+		if (n <= q) break;
+		if (p < n) return q;
+		q = n;
+	}
+	return q;
+}
+
+/* Move the caret one *display* row (a wrapped line spans several rows). */
+static void move_cursor_row(int delta)
+{
+	int ccell = line_start(cur_line) + cur_col;
+
+	if (ccell > ncell) ccell = ncell;
+	int rs = row_start_of(ccell);
+	int off = ccell - rs;
+	int target;
+
+	if (delta > 0) {
+		int n = next_row(rs);
+		if (n <= rs || n >= ncell) {
+			target = ncell;
+			off = 0;
+		} else
+			target = n;
+	} else {
+		if (rs == 0) return;
+		int prev = 0, q = 0;
+		while (q < rs) {
+			int n = next_row(q);
+			if (n <= q) break;
+			prev = q;
+			q = n;
+		}
+		target = prev;
+	}
+
+	int end = next_row(target);
+	if (end <= target) end = ncell;
+	/* a row that ends with a newline cannot hold the caret after it */
+	if (end > target && end <= ncell && cells[end - 1] == CELL_NL)
+		end--;
+	if (off > end - target) off = end - target;
+	if (off < 0) off = 0;
+
+	int cell = target + off;
+	if (cell > ncell) cell = ncell;
+	cur_line = offset_to_line(cell);
+	cur_col = cell - line_start(cur_line);
+
+	int crow = row_of_cell(cell);
+	if (crow < view_top) view_top = crow;
+	if (crow >= view_top + rows()) view_top = crow - rows() + 1;
+	if (view_top < 0) view_top = 0;
+}
+
 static void open_keyboard(int target, int page)
 {
 	kb_target = target;
@@ -2191,6 +2687,20 @@ static void open_keyboard(int target, int page)
 
 static void handle_view_key(key_event_t ev)
 {
+	if (!edit_mode && search_n > 0) {
+		/* F1 / F4 walk the matches; their normal meaning returns when
+		   no search is active */
+		if (ev.key == KEY_F1) {
+			search_cur = (search_cur + search_n - 1) % search_n;
+			search_show();
+			return;
+		}
+		if (ev.key == KEY_F4) {
+			search_cur = (search_cur + 1) % search_n;
+			search_show();
+			return;
+		}
+	}
 	/* While a pinyin composition is open, its own keys win. */
 	if (edit_mode && py_len > 0) {
 		int n = py_candidates();
@@ -2243,8 +2753,11 @@ static void handle_view_key(key_event_t ev)
 	if (edit_mode) {
 		char c = ev_letter(ev);
 		if (!c && alpha_lock) {
-			c = alpha_letter(ev.key);
-			if (c && ev.shift)
+			/* locked ALPHA types the printed overlay, so [.] is a space */
+			c = alpha_symbol(ev.key);
+			if (!c)
+				c = alpha_letter(ev.key);
+			if (c && ev.shift && c >= 'a' && c <= 'z')
 				c = (char)(c - 32);
 		}
 		if (!c && !ev.alpha && !ev.shift &&
@@ -2264,7 +2777,10 @@ static void handle_view_key(key_event_t ev)
 					py_refresh();
 				}
 			} else if (py_len == 0) {
-				text_insert((uint16_t)((unsigned char)c - 0x20));
+				uint16_t cell = (uint16_t)((unsigned char)c - 0x20);
+				if (cn_mode)
+					cell = kb_fullwidth(cell);
+				text_insert(cell);
 			}
 			return;
 		}
@@ -2282,7 +2798,7 @@ static void handle_view_key(key_event_t ev)
 		return;
 	case KEY_UP:
 		if (edit_mode) {
-			move_cursor_line(-1);
+			move_cursor_row(-1);
 		} else {
 			int total = row_count();
 			view_top -= rows();
@@ -2293,33 +2809,33 @@ static void handle_view_key(key_event_t ev)
 		return;
 	case KEY_DOWN:
 		if (edit_mode) {
-			move_cursor_line(1);
+			move_cursor_row(1);
 		} else {
 			int total = row_count();
+			int lim = total - rows();
+			if (lim < 0)
+				lim = 0;
 			view_top += rows();
-			if (view_top > total - 1)
-				view_top = total - 1;
+			if (view_top > lim)
+				view_top = lim;
 			if (view_top < 0)
 				view_top = 0;
 		}
 		return;
 	case KEY_LEFT:
-		if (edit_mode) {
-			if (cur_col > 0) cur_col--;
-			else if (cur_line > 0) {
-				move_cursor_line(-1);
-				cur_col = line_len(line_start(cur_line));
-			}
-		}
-		return;
 	case KEY_RIGHT:
 		if (edit_mode) {
-			int len = line_len(line_start(cur_line));
-			if (cur_col < len) cur_col++;
-			else if (cur_line < line_count() - 1) {
-				move_cursor_line(1);
-				cur_col = 0;
-			}
+			/* Move by one cell in absolute terms: at a wrap point the
+			   caret then hops to the neighbouring display row, which
+			   column arithmetic inside one logical line cannot do. */
+			int off = line_start(cur_line) + cur_col;
+			off += (ev.key == KEY_RIGHT) ? 1 : -1;
+			if (off < 0)
+				off = 0;
+			if (off > ncell)
+				off = ncell;
+			cur_line = offset_to_line(off);
+			cur_col = off - line_start(cur_line);
 		}
 		return;
 	case KEY_F2:
@@ -2340,8 +2856,6 @@ static void handle_view_key(key_event_t ev)
 			open_keyboard(0, PAGE_PUNCT);
 		return;
 	case KEY_F6:
-		if (edit_mode)
-			return;			/* handled above */
 		help_back = MODE_VIEW;
 		mode = MODE_HELP;
 		return;
@@ -2353,10 +2867,23 @@ static void handle_view_key(key_event_t ev)
 		}
 		edit_mode = !edit_mode;
 		if (edit_mode) {
-			cur_line = view_top;
+			/* view_top counts display rows but cur_line counts
+			   logical lines: convert, otherwise paging N times
+			   moves the caret N*wrap lines further down. */
+			int rp = row_start(view_top);
+			cur_line = offset_to_line(rp);
 			if (cur_line > line_count() - 1)
 				cur_line = line_count() - 1;
-			cur_col = (line_len(line_start(cur_line)) > 0) ? 1 : 0;
+			/* first cell of that logic line as shown on this page,
+			   caret one character further right */
+			int base = line_start(cur_line);
+			int len = line_len(base);
+			int col = rp - base;
+			if (col < 0)
+				col = 0;
+			if (col > len)
+				col = len;
+			cur_col = (col < len) ? col + 1 : len;
 		} else {
 			py_reset();
 		}
@@ -2385,7 +2912,7 @@ static void handle_kb_key(key_event_t ev)
 	char ch = kb_char(kb_row, kb_col);
 	int pinyin = (kb_page == PAGE_PINYIN);
 	int punct = (kb_page == PAGE_PUNCT);
-	int gc = kb_cols(), gr = (pinyin || punct) ? 2 : 5;
+	int gc = kb_cols(), gr = punct ? 3 : (pinyin ? 2 : 5);
 
 	/* Letters: ALPHA+key everywhere, and a bare key on the pinyin page.
 	   Function/arrow/DEL keys are always handled as themselves. */
@@ -2482,7 +3009,7 @@ static void handle_kb_key(key_event_t ev)
 			uint16_t pc = punct_cell(kb_row * 13 + kb_col);
 			if (!pc) {			/* empty cell: jump to the next one */
 				int i = kb_row * 13 + kb_col;
-				while (i < 25 && !punct_cell(++i))
+				while (i < PUNCT_COUNT - 1 && !punct_cell(++i))
 					;
 				if (i < 26) {
 					kb_row = i / 13;
@@ -2541,92 +3068,35 @@ static void fs_delete_selected(void)
 	fs_list_dir();
 	if (list_sel >= name_count)
 		list_sel = name_count ? name_count - 1 : 0;
-	snprintf(status_msg, sizeof status_msg, "已删除 %s", name);
+	snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xC9\xBE\xB3\xFD %s", name);
 	status_sticky = 1;
 }
 
 /* Confirmation screen for deleting a file. */
-#define DBG_ROWS 5
-#define DBG_UNITS 8
-static int dbg_rc[DBG_ROWS];
-static uint16_t dbg_units[DBG_ROWS][DBG_UNITS];
-static int dbg_n;
+#define DBG_MAX 60
+#define DBG_PAGE 4
 
-/* Probe several pattern spellings; each row records its return code. */
-static void dbg_collect(void)
-{
-	static char const *pats[DBG_ROWS] = {
-		"\\\\fls0\\*",		/* current form: \fls0\* */
-		"\\fls0\\*",		/* single leading slash: \fls0\* */
-		"/fls0/*",			/* posix-looking */
-		"\\\\fls0\\*.TXT",		/* with extension */
-		"\\\\fls0\\",
-	};
-	uint16_t found[256];
-	struct BFile_FileInfo info;
 
-	dbg_n = 0;
-	for (int p = 0; p < DBG_ROWS; p++) {
-		uint16_t pattern[64];
-		int k = 0;
-		for (char const *s = pats[p]; *s && k < 63; s++)
-			pattern[k++] = (uint16_t)(unsigned char)*s;
-		pattern[k] = 0;
 
-		int handle = 0;
-		int rc = BFile_FindFirst(pattern, &handle, found, &info);
-		dbg_rc[p] = rc;
-		for (int i = 0; i < DBG_UNITS; i++)
-			dbg_units[p][i] = 0;
-		if (rc == 0) {
-			for (int i = 0; i < DBG_UNITS && found[i]; i++)
-				dbg_units[p][i] = found[i];
-			int last = -1;
-			for (int i = 0; found[i]; i++)
-				last = i;
-			int st = last > 5 ? last - 5 : 0;
-			for (int i = 0, n = 0; found[st + i] && n < DBG_UNITS; i++, n++)
-				dbg_units[p][n] = found[st + i];
-			BFile_FindClose(handle);
-			dbg_n++;
-		}
-	}
-}
-
-static void draw_debug(void)
-{
-	ui_title("F2 诊断");
-	char line[40];
-	snprintf(line, sizeof line, "命中 %d  列表 %d", dbg_n, name_count);
-	draw_small(2, CONTENT_Y, line, 0);
-	static char const *lab[DBG_ROWS] = { "A \\fls0\*", "B \fls0\*",
-	                                     "C /fls0/*", "D ext", "E dir" };
-	for (int r = 0; r < DBG_ROWS; r++) {
-		char buf[64];
-		int k = snprintf(buf, sizeof buf, "%s rc=%d ", lab[r], dbg_rc[r]);
-		for (int i = 0; i < DBG_UNITS && dbg_units[r][i]; i++)
-			k += snprintf(buf + k, sizeof buf - k, "%X ",
-			              (unsigned)dbg_units[r][i]);
-		draw_small(2, CONTENT_Y + 10 + r * 9, buf, 0);
-	}
-	dupdate();
-}
 
 static void draw_confirm(void)
 {
+	ui_no_cups = 1;
+	for (int i = 0; i < 6; i++)
+		box_lab[i] = 0;
 	if (confirm_kind == 1) {
-		ui_title("未保存");
-		draw_ui(2, CONTENT_Y + 2, "放弃修改？", 0);
-		draw_ui(2, CONTENT_Y + 12, "EXE放弃", 0);
-		draw_ui(2, CONTENT_Y + 22, "EXIT继续编辑", 0);
+		ui_title("\xCE\xB4\xB1\xA3\xB4\xE6");
+		draw_ui(2, CONTENT_Y + 2, "\xB7\xC5\xC6\xFA\xD0\xDE\xB8\xC4\xA3\xBF", 0);
+		draw_ui(2, CONTENT_Y + 12, "EXE\xB7\xC5\xC6\xFA", 0);
+		draw_ui(2, CONTENT_Y + 22, "EXIT\xBC\xCC\xD0\xF8\xB1\xE0\xBC\xAD", 0);
 		dupdate();
 		return;
 	}
-	ui_title("删除文件");
+	ui_title("\xC9\xBE\xB3\xFD\xCE\xC4\xBC\xFE");
 	int y = CONTENT_Y + 4;
-	draw_ui(2, y, "确定删除？", 0);
+	draw_ui(2, y, "\xC8\xB7\xB6\xA8\xC9\xBE\xB3\xFD\xA3\xBF", 0);
 	draw_fname(2, y + 12, del_name, 0);
-	ui_hints("EXE删除  EXIT取消", "", 0);
+	ui_hints("EXE\xC9\xBE\xB3\xFD  EXIT\xC8\xA1\xCF\xFB", "", 0);
 	dupdate();
 }
 
@@ -2648,7 +3118,7 @@ static void handle_confirm_key(key_event_t ev)
 		gint_world_switch(GINT_CALL(fs_delete_selected));
 		mode = MODE_LIST;
 	} else if (ev.key == KEY_EXIT) {
-		snprintf(status_msg, sizeof status_msg, "已取消");
+		snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xC8\xA1\xCF\xFB");
 		status_sticky = 1;
 		mode = MODE_LIST;
 	}
@@ -2664,20 +3134,14 @@ static void handle_list_key(key_event_t ev)
 		if (list_sel < name_count - 1) list_sel++;
 		return;
 	case KEY_F1:
+		name_rename = 0;
 		gint_world_switch(GINT_CALL(name_default));
 		mode = MODE_NAME;
 		return;
 	case KEY_F2:
-		if (ev.shift) {
-			gint_world_switch(GINT_CALL(dbg_collect));
-			mode = MODE_DEBUG;
-			return;
-		}
-		/* jump back to the position remembered from the last session */
-		if (fs_restore())
-			mode = MODE_VIEW;
-		else
-			snprintf(status_msg, sizeof status_msg, "无上次位置");
+		gint_world_switch(GINT_CALL(name_begin_rename));
+		if (name_rename)
+			mode = MODE_NAME;
 		return;
 	case KEY_F3:
 		if (ev.shift) {
@@ -2693,7 +3157,7 @@ static void handle_list_key(key_event_t ev)
 		if (name_count == 0)
 			return;
 		if (!strcmp(names[list_sel], "..") || is_dir[list_sel]) {
-			snprintf(status_msg, sizeof status_msg, "不能删文件夹");
+			snprintf(status_msg, sizeof status_msg, "\xB2\xBB\xC4\xDC\xC9\xBE\xCE\xC4\xBC\xFE\xBC\xD0");
 			status_sticky = 1;
 			return;
 		}
@@ -2728,6 +3192,7 @@ static void handle_list_key(key_event_t ev)
 		edit_mode = 0;
 		dirty = 0;
 		gint_world_switch(GINT_CALL(fs_read_current));
+		apply_saved_pos();
 		mode = MODE_VIEW;
 		return;
 	default:
@@ -2744,6 +3209,7 @@ static int ev_repeat;	/* 1 when the event was synthesised by auto-repeat */
 static key_event_t next_event(void)
 {
 	static int rep_key, rep_n;
+	static int blink_n;
 
 	for (;;) {
 		volatile int timeout = 15;
@@ -2769,9 +3235,18 @@ static key_event_t next_event(void)
 				rep_key = 0;
 				rep_n = 0;
 			}
+			/* blink the caret: 33 * 15 ms is about 0.5 s.  The
+			   idle event makes the main loop repaint. */
+			if (++blink_n >= 33) {
+				blink_n = 0;
+				blink_on = !blink_on;
+				return none;
+			}
 			continue;
 		}
 
+		blink_on = 1;
+		blink_n = 0;
 		if (e.type == KEYEV_UP) {
 			if (e.key == rep_key) {
 				rep_key = 0;
@@ -2828,7 +3303,9 @@ int main(void)
 {
 	gint_setrestart(1);
 
-	int reentry = (cells != NULL);
+restart:
+	;
+	int reentry = app_ready || root_dev[0];
 
 	if (cells) {
 		/* re-entered from the main menu: the buffers from the previous run
@@ -2863,16 +3340,33 @@ int main(void)
 	}
 
 have_memory:
-	if (!reentry) {
+	/* The volume name survives a menu exit (the image is kept), so only probe
+	   when we really do not know it yet. The listing is always rebuilt because
+	   the buffers are released when we hand control back to the OS. */
+	if (!root_dev[0])
 		gint_world_switch(GINT_CALL(fs_probe_root));
-		gint_world_switch(GINT_CALL(fs_list_dir));
+	else
+		normalise_cur_dir();
+	if (!cur_dir[0] || !strcmp(cur_dir, "/"))
+		snprintf(cur_dir, sizeof cur_dir, "%s", root_dev);
+
+	gint_world_switch(GINT_CALL(fs_list_dir));
+
+	if (!reentry) {
 		list_sel = list_top = 0;
 
 		/* reopen the file that was being read when the app was last closed */
 		if (fs_restore())
 			mode = MODE_VIEW;
 	}
-	/* on re-entry everything is still in memory: show it immediately */
+	/* coming back from the menu the document is gone: show the folder again */
+	if (mode != MODE_LIST && !cells[0] && !ncell)
+		mode = MODE_LIST;
+	if (list_sel >= name_count)
+		list_sel = list_top = 0;
+	if (list_top > list_sel)
+		list_top = list_sel;
+	app_ready = 1;
 
 	for (;;) {
 		dclear(C_WHITE);
@@ -2888,27 +3382,35 @@ have_memory:
 			draw_search();
 		else if (mode == MODE_CONFIRM)
 			draw_confirm();
-		else if (mode == MODE_DEBUG)
-			draw_debug();
 		else
 			draw_keyboard();
 
 		key_event_t ev = next_event();
 		status_sticky = 0;
-		if (ev.key == KEY_ACON) {
-			/* AC/ON switches the calculator off */
+
+		if (ev.key == KEY_ACON && ev.shift) {
+			/* SHIFT+AC/ON powers off; a bare AC/ON does nothing */
 			gint_world_switch(GINT_CALL(fs_save_state));
+			app_release();
 			gint_poweroff(1);
 			break;
 		}
 		if (ev.key == KEY_MENU) {
-			/* MENU always leaves the add-in */
+			/* The OS's USB dialog only appears in the main menu, and an
+			   add-in cannot see the cable. So MENU parks us in the OS
+			   menu (state kept); picking FXTXT there returns right
+			   here, making "MENU, plug in, LINK" the USB workflow. */
 			alpha_lock = 0;
 			shift_armed = 0;
 			alpha_armed = 0;
 			py_reset();
 			gint_world_switch(GINT_CALL(fs_save_state));
-			break;
+			/* the OS heap outlives this instance: hand the buffers
+			   back before parking in the menu, then rebuild */
+			app_release();
+			gint_osmenu();
+			gint_setrestart(1);
+			goto restart;
 		}
 		if (mode == MODE_LIST) {
 			handle_list_key(ev);
@@ -2918,9 +3420,6 @@ have_memory:
 			handle_name_key(ev);
 		} else if (mode == MODE_SEARCH) {
 			handle_search_key(ev);
-		} else if (mode == MODE_DEBUG) {
-			if (ev.key == KEY_EXIT || ev.key == KEY_EXE)
-				mode = MODE_LIST;
 		} else if (mode == MODE_CONFIRM) {
 			handle_confirm_key(ev);
 		} else if (mode == MODE_HELP) {
@@ -2935,13 +3434,8 @@ have_memory:
 		}
 	}
 
-	free(cells);
-	free(rawbuf);
-	free(names);
-	free(is_dir);
-	cells = NULL;
-	rawbuf = NULL;
-	names = NULL;
-	is_dir = NULL;
+	/* Keep every buffer allocated: gint restarts this image when the add-in is
+	   launched again, so the next entry reuses them and appears instantly.
+	   (Freeing here made the second re-entry run out of memory.) */
 	return 0;
 }

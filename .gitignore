@@ -42,3 +42,7 @@ work/fxtxt/assets/icon_mirror.txt
 # ---- release binary: attach to a GitHub Release instead ----
 out/FXTXT.G1A
 
+
+# ---- one-off patch scripts (kept locally, not part of the repo) ----
+tools/patch_*.py
+
