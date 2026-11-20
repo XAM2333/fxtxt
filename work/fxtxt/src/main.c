@@ -1932,11 +1932,8 @@ static void draw_view(void)
 
 	/* the caret blinks: while the phase is off the cell stays empty */
 	if (caret_x >= 0 && blink_on) {
-		/* two pixels wide, otherwise the 1 px line looks grey on the LCD */
-		for (int k = 0; k < lh() - 1; k++) {
+		for (int k = 0; k < lh() - 1; k++)
 			px_on(caret_x, caret_y + k);
-			px_on(caret_x + 1, caret_y + k);
-		}
 	}
 
 	if (edit_mode && py_len > 0) {
