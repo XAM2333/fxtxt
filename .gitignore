@@ -46,3 +46,10 @@ out/FXTXT.G1A
 # ---- one-off patch scripts (kept locally, not part of the repo) ----
 tools/patch_*.py
 
+
+# local-only: not needed by the build
+FONT12.dlf
+out/fonts/FONT12.dlf
+PROB.g1a
+work/probe/
+tools/_probe*.py
