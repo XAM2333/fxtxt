@@ -3227,11 +3227,13 @@ static key_event_t next_event(void)
 					ev_repeat = 1;
 					return r;
 				}
-				sleep_ms(15);			/* real delay, no busy spin */
 			} else {
 				rep_key = 0;
 				rep_n = 0;
 			}
+			/* the idle tick: getkey_opt() returns at once here, so the
+			   delay has to be explicit or the blink counter races */
+			sleep_ms(15);
 			/* blink the caret: 33 * 15 ms is about 0.5 s.  The
 			   idle event makes the main loop repaint. */
 			if (++blink_n >= 33) {
