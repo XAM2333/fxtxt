@@ -1916,8 +1916,8 @@ static void fs_make_demo(void)
 
 /*=== recent files ========================================================*/
 
-#define RECENT_MAX 8
-#define RECENT_LEN 72
+#define RECENT_MAX 4
+#define RECENT_LEN 40
 
 static char *rec_buf;			/* RECENT_MAX * RECENT_LEN, malloc'd */
 static int rec_line[RECENT_MAX];
@@ -1999,7 +1999,7 @@ static void rec_save(void)
 	/* built on the stack: RECENT_MAX * (RECENT_LEN + 16) is small, and
 	   no stdio buffer is involved, which is what used to reboot the
 	   unit when the document still owned the heap */
-	char out[RECENT_MAX * (RECENT_LEN + 16)];
+	char out[RECENT_MAX * (RECENT_LEN + 16)];	/* 224 bytes */
 	int n = 0;
 	for (int i = 0; i < rec_n; i++) {
 		int w = snprintf(out + n, sizeof out - n, "%d\t%s\n",
