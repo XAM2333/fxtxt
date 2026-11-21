@@ -726,9 +726,23 @@ static save_state_t st;
 static int state_fc(uint16_t *fc, int cap)
 {
 	static char const *const cand[2] = {
-		"\\\\fls0\\FXTXT.CFG",
-		"/fls0/FXTXT.CFG",
+		"\\\\fls0\\FXTXT\\CFG.BIN",
+		"/fls0/FXTXT/CFG.BIN",
 	};
+	/* Never add entries straight to \\fls0: the main menu rebuilds its
+	   add-in list from that directory and extra files make it come up
+	   short. One subfolder of our own keeps the root exactly as delivered. */
+	{
+		uint16_t d[40];
+		int m = 0;
+		for (int i = 0; cand[0][i] && m < 39; i++) {
+			if (cand[0][i] == '\\' && cand[0][i + 1] == 'C')
+				break;
+			d[m++] = (unsigned char)cand[0][i];
+		}
+		d[m] = 0;
+		BFile_Create(d, BFile_Type_Directory, NULL);
+	}
 	for (int k = 0; k < 2; k++) {
 		int n = 0;
 		for (int i = 0; cand[k][i] && n < cap - 1; i++)
