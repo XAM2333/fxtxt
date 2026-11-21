@@ -3295,6 +3295,7 @@ static void handle_view_key(key_event_t ev)
 		gint_world_switch(GINT_CALL(fs_save_state));
 		{
 		}
+			gint_world_switch(GINT_CALL(fs_save_state));	/* remember the page before the mode changes */
 		mode = MODE_LIST;
 		return;
 	case KEY_UP:
