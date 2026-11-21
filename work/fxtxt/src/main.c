@@ -179,6 +179,13 @@ static void put_px(int x, int y, int on, int invert)
 
 static void blit8(int x, int y, unsigned char const *g, int invert)
 {
+	if (invert) {
+		/* a search hit has no black bar behind it: lay one down first,
+		   then the glyph is punched out of it below */
+		for (int r = 0; r < 8; r++)
+			for (int c = 0; c < 8; c++)
+				px_on(x + c, y + r);
+	}
 	for (int r = 0; r < 8; r++) {
 		unsigned b = g[r];
 		for (int c = 0; c < 8; c++)
@@ -1665,6 +1672,16 @@ static void handle_name_key(key_event_t ev)
 			mode = MODE_LIST;
 		return;
 	case KEY_EXIT:
+		if (search_n > 0) {
+			/* first EXIT drops the highlight and returns to plain
+			   reading; a second one leaves the document */
+			search_n = 0;
+			search_len = 0;
+			view_top = 0;
+			return;
+		}
+		search_n = 0;
+		search_len = 0;
 		/* leaving the document: remember this file's position */
 		gint_world_switch(GINT_CALL(fs_save_state));
 		if (name_count > 0 && list_sel >= 0 && list_sel < name_count) {
