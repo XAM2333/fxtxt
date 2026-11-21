@@ -3160,7 +3160,7 @@ static void handle_view_key(key_event_t ev)
 					if (back < 0)
 						back = 0;
 					int keep = back;
-					chunk_rows = rows_upto(keep);
+					chunk_rows = keep > 0 ? rows_upto(keep) : 0;
 					load_chunk(keep);
 					view_top = row_count() - rows();
 					if (view_top < 0)
