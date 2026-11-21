@@ -1936,6 +1936,37 @@ static FILE *rec_fopen(char const *mode)
 	return NULL;
 }
 
+/* BFile save: the stdio path needs a buffer and reboots the unit while the
+   document still owns the heap; this one allocates nothing. A BFile has a
+   fixed size and can only be written once, so recreate it every time. */
+static int rec_bfile_save(char const *data, int len)
+{
+	static char const *cand[] = { "\\\\fls0\\FXTXT.REC", "/fls0/FXTXT.REC", NULL };
+	uint16_t fc[48];
+
+	if (len <= 0)
+		return -1;
+	for (int k = 0; cand[k]; k++) {
+		int n = 0;
+		for (int i = 0; cand[k][i] && n < 47; i++)
+			fc[n++] = (uint16_t)(unsigned char)cand[k][i];
+		fc[n] = 0;
+
+		BFile_Remove(fc);
+		int size = len;
+		if (BFile_Create(fc, BFile_File, &size) < 0)
+			continue;
+		int fd = BFile_Open(fc, BFile_WriteOnly);
+		if (fd < 0)
+			continue;
+		int w = BFile_Write(fd, data, len);
+		BFile_Close(fd);
+		if (w == len)
+			return 0;
+	}
+	return -1;
+}
+
 static char *rec_at(int i) { return rec_buf + i * RECENT_LEN; }
 
 static void rec_load(void)
@@ -1965,12 +1996,19 @@ static void rec_load(void)
 
 static void rec_save(void)
 {
-	FILE *f = rec_fopen("wb");
-	if (!f)
-		return;
-	for (int i = 0; i < rec_n; i++)
-		fprintf(f, "%d\t%s\n", rec_line[i], rec_at(i));
-	fclose(f);
+	/* built on the stack: RECENT_MAX * (RECENT_LEN + 16) is small, and
+	   no stdio buffer is involved, which is what used to reboot the
+	   unit when the document still owned the heap */
+	char out[RECENT_MAX * (RECENT_LEN + 16)];
+	int n = 0;
+	for (int i = 0; i < rec_n; i++) {
+		int w = snprintf(out + n, sizeof out - n, "%d\t%s\n",
+		                 rec_line[i], rec_at(i));
+		if (w < 0 || n + w >= (int)sizeof out)
+			break;
+		n += w;
+	}
+	rec_bfile_save(out, n);
 }
 
 /* move path to the front of the list with its current line number */
@@ -3206,6 +3244,12 @@ static void handle_view_key(key_event_t ev)
 		search_n = 0;
 		search_len = 0;
 		gint_world_switch(GINT_CALL(fs_save_state));
+		if (name_count > 0 && list_sel >= 0 && list_sel < name_count) {
+			char full[80];
+			snprintf(full, sizeof full, "%s/%s", cur_dir,
+			         names[list_sel]);
+			rec_touch(full, cur_line + 1);
+		}
 		mode = MODE_LIST;
 		return;
 	case KEY_UP:
