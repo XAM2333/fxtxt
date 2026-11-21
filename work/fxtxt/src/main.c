@@ -647,6 +647,7 @@ static void fs_list_dir(void);
 static int app_ready;
 static void build_paths(void);
 static void fs_read_current(void);
+static void undo_clear(void);
 
 
 #define STATE_PATH "\\\\fls0\\FXTXT.CFG"
@@ -1664,6 +1665,7 @@ static void fs_read_current(void)
 	fclose(f);
 	if (n < 0) n = 0;
 	decode_into_cells(rawbuf, n);
+	undo_clear();
 	if (clipped)
 		snprintf(status_msg, sizeof status_msg, "\xB3\xAC\xB3\xF6%dK", text_max / 1024);
 	else
@@ -1684,6 +1686,7 @@ static void fs_redecode(void)
 	if (n < 0)
 		n = 0;
 	decode_into_cells(rawbuf, n);
+	undo_clear();
 	if (cur_line > line_count() - 1)
 		cur_line = line_count() - 1;
 	if (cur_line < 0)
@@ -2260,6 +2263,70 @@ static char kb_char(int row, int col)
 	return (i >= 0 && i < n) ? p[i] : 0;
 }
 
+/*=== undo =================================================================*/
+
+#define UNDO_MAX 64
+
+typedef struct {
+	unsigned char kind;	/* 0: the edit added this cell, 1: it removed it */
+	int pos;
+	uint16_t cell;
+} undo_rec_t;
+
+static undo_rec_t undo_buf[UNDO_MAX];
+static int undo_n;
+
+static void undo_push(int kind, int pos, uint16_t cell)
+{
+	if (undo_n == UNDO_MAX) {
+		memmove(undo_buf, undo_buf + 1,
+		        sizeof undo_buf[0] * (UNDO_MAX - 1));
+		undo_n--;
+	}
+	undo_buf[undo_n].kind = (unsigned char)kind;
+	undo_buf[undo_n].pos = pos;
+	undo_buf[undo_n].cell = cell;
+	undo_n++;
+}
+
+static void undo_apply(void)
+{
+	if (undo_n <= 0)
+		return;
+	undo_rec_t r = undo_buf[--undo_n];
+
+	if (r.kind == 0) {
+		/* take the cell we added out again */
+		if (r.pos >= 0 && r.pos < ncell) {
+			memmove(cells + r.pos, cells + r.pos + 1,
+			        sizeof(uint16_t) * (size_t)(ncell - r.pos - 1));
+			ncell--;
+		}
+	} else {
+		/* put back the cell we deleted */
+		if (ncell < text_max && r.pos >= 0 && r.pos <= ncell) {
+			memmove(cells + r.pos + 1, cells + r.pos,
+			        sizeof(uint16_t) * (size_t)(ncell - r.pos));
+			cells[r.pos] = r.cell;
+			ncell++;
+		}
+	}
+
+	int pos = r.pos;
+	if (pos > ncell)
+		pos = ncell;
+	if (pos < 0)
+		pos = 0;
+	cur_line = offset_to_line(pos);
+	cur_col = pos - line_start(cur_line);
+	dirty = 1;
+}
+
+static void undo_clear(void)
+{
+	undo_n = 0;
+}
+
 static void text_insert(uint16_t cell)
 {
 	if (ncell >= text_max)
@@ -2272,6 +2339,7 @@ static void text_insert(uint16_t cell)
 	ncell++;
 	cur_col++;
 	dirty = 1;
+	undo_push(0, off, cell);
 }
 
 static void text_newline(void)
@@ -2287,6 +2355,7 @@ static void text_newline(void)
 	cur_line++;
 	cur_col = 0;
 	dirty = 1;
+	undo_push(0, off, CELL_NL);
 }
 
 static void text_backspace(void)
@@ -2295,6 +2364,7 @@ static void text_backspace(void)
 
 	if (off <= 0 || ncell <= 0)
 		return;
+	undo_push(1, off - 1, cells[off - 1]);
 	memmove(cells + off - 1, cells + off, (ncell - off) * sizeof(uint16_t));
 	ncell--;
 	if (cur_col > 0) {
@@ -2887,6 +2957,10 @@ static void handle_view_key(key_event_t ev)
 		return;
 	case KEY_DEL:
 		if (edit_mode) {
+			if (ev.shift) {
+				undo_apply();
+				return;
+			}
 			text_backspace();
 			return;
 		}
