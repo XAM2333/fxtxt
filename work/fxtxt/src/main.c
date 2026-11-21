@@ -82,6 +82,9 @@ static unsigned char const punct_gb[] = {
 
 static uint16_t *cells;
 static int ncell;
+static int chunk_base;		/* file offset of cells[0] */
+static int chunk_bytes;		/* bytes of the file held in rawbuf */
+static int chunk_more;		/* something follows this window */
 static unsigned char *rawbuf;
 
 static int edit_mode;
@@ -1674,24 +1677,50 @@ static void handle_name_key(key_event_t ev)
 	}
 }
 
-static void fs_read_current(void)
+/* Read the window that starts at byte `base`. Windows that do not reach EOF
+   are cut back to the last newline, so the next window starts on a line
+   boundary and scrolling can just keep going. */
+static int load_chunk(int base)
 {
 	ncell = 0;
+	chunk_bytes = 0;
+	chunk_more = 0;
 	FILE *f = open_read();
 	if (!f) {
 		snprintf(status_msg, sizeof status_msg, "\xB4\xF2\xB2\xBB\xBF\xAA");
-		return;
+		return 0;
+	}
+	if (base > 0 && fseek(f, (long)base, SEEK_SET) != 0) {
+		fclose(f);
+		return 0;
 	}
 	int n = (int)fread(rawbuf, 1, text_max, f);
-	int clipped = (n == text_max) && (fgetc(f) != EOF);
+	int more = (n == text_max) && (fgetc(f) != EOF);
 	fclose(f);
-	if (n < 0) n = 0;
+	if (n < 0)
+		n = 0;
+	if (more) {
+		int cut = -1;
+		for (int i = n - 1; i > 0; i--)
+			if (rawbuf[i] == '\n') {
+				cut = i;
+				break;
+			}
+		if (cut > 0)
+			n = cut + 1;
+		chunk_more = 1;
+	}
+	chunk_base = base;
+	chunk_bytes = n;
 	decode_into_cells(rawbuf, n);
 	undo_clear();
-	if (clipped)
-		snprintf(status_msg, sizeof status_msg, "\xB3\xAC\xB3\xF6%dK", text_max / 1024);
-	else
-		snprintf(status_msg, sizeof status_msg, "%d\xD7\xD6\xBD\xDA GB", n);
+	snprintf(status_msg, sizeof status_msg, "%d\xD7\xD6\xBD\xDA GB", n);
+	return n;
+}
+
+static void fs_read_current(void)
+{
+	load_chunk(0);
 }
 
 /* Re-read the open file and decode it with the forced encoding. */
@@ -3086,8 +3115,19 @@ static void handle_view_key(key_event_t ev)
 		} else {
 			int total = row_count();
 			view_top -= rows();
-			if (view_top < 0)
+			if (view_top < 0) {
 				view_top = 0;
+				if (chunk_base > 0) {
+					int back = chunk_base - text_max;
+					if (back < 0)
+						back = 0;
+					load_chunk(back);
+					view_top = row_count() - rows();
+					if (view_top < 0)
+						view_top = 0;
+					return;
+				}
+			}
 			(void)total;
 		}
 		return;
@@ -3100,8 +3140,15 @@ static void handle_view_key(key_event_t ev)
 			if (lim < 0)
 				lim = 0;
 			view_top += rows();
-			if (view_top > lim)
+			if (view_top > lim) {
 				view_top = lim;
+				if (chunk_more) {
+					load_chunk(chunk_base + chunk_bytes);
+					view_top = 0;
+					hscroll = 0;
+					return;
+				}
+			}
 			if (view_top < 0)
 				view_top = 0;
 		}
