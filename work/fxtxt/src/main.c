@@ -1804,18 +1804,123 @@ static void fs_make_demo(void)
 
 /*=== list view ============================================================*/
 
+/*=== recent files ========================================================*/
+
+#define RECENT_MAX 8
+#define RECENT_LEN 72
+
+static char *rec_buf;			/* RECENT_MAX * RECENT_LEN, malloc'd */
+static int rec_line[RECENT_MAX];
+static int rec_n;
+static int list_recent;			/* the list page shows the recents */
+static int rec_sel;
+
+static FILE *rec_fopen(char const *mode)
+{
+	static char const *c[] = { "\\\\fls0\\FXTXT.REC", "/fls0/FXTXT.REC", "FXTXT.REC", NULL };
+	for (int i = 0; c[i]; i++) {
+		FILE *f = fopen(c[i], mode);
+		if (f)
+			return f;
+	}
+	return NULL;
+}
+
+static char *rec_at(int i) { return rec_buf + i * RECENT_LEN; }
+
+static void rec_load(void)
+{
+	rec_n = 0;
+	if (!rec_buf)
+		return;
+	FILE *f = rec_fopen("rb");
+	if (!f)
+		return;
+	char line[RECENT_LEN + 16];
+	while (rec_n < RECENT_MAX && fgets(line, sizeof line, f)) {
+		int n = 0;
+		while (line[n] && line[n] != '\r' && line[n] != '\n')
+			n++;
+		line[n] = 0;
+		char *tab = strchr(line, '\t');
+		if (!tab)
+			continue;
+		*tab = 0;
+		rec_line[rec_n] = atoi(line);
+		snprintf(rec_at(rec_n), RECENT_LEN, "%s", tab + 1);
+		rec_n++;
+	}
+	fclose(f);
+}
+
+static void rec_save(void)
+{
+	FILE *f = rec_fopen("wb");
+	if (!f)
+		return;
+	for (int i = 0; i < rec_n; i++)
+		fprintf(f, "%d\t%s\n", rec_line[i], rec_at(i));
+	fclose(f);
+}
+
+/* move path to the front of the list with its current line number */
+static void rec_touch(char const *path, int line)
+{
+	if (!rec_buf || !path[0])
+		return;
+	rec_load();
+	int at = -1;
+	for (int i = 0; i < rec_n; i++)
+		if (!strcmp(rec_at(i), path)) {
+			at = i;
+			break;
+		}
+	if (at < 0)
+		at = (rec_n < RECENT_MAX) ? rec_n++ : RECENT_MAX - 1;
+	for (int i = at; i > 0; i--) {
+		memcpy(rec_at(i), rec_at(i - 1), RECENT_LEN);
+		rec_line[i] = rec_line[i - 1];
+	}
+	snprintf(rec_at(0), RECENT_LEN, "%s", path);
+	rec_line[0] = line;
+	rec_save();
+}
+
+/* open the highlighted recent entry, resuming its line */
+static void rec_open_sel(void)
+{
+	if (rec_sel < 0 || rec_sel >= rec_n)
+		return;
+	char path[RECENT_LEN];
+	snprintf(path, sizeof path, "%s", rec_at(rec_sel));
+	char *slash = strrchr(path, '/');
+	if (!slash)
+		return;
+	*slash = 0;
+	snprintf(cur_dir, sizeof cur_dir, "%s", path[0] ? path : root_dev);
+	fs_list_dir();
+	for (int i = 0; i < name_count; i++)
+		if (!strcmp(names[i], slash + 1)) {
+			list_sel = i;
+			break;
+		}
+	fs_read_current();
+	mode = MODE_VIEW;
+}
+
 static void draw_list(void)
 {
 	ui_no_cups = 0;
 	char head[24];
 	char const *folder = strrchr(cur_dir, '/');
 	folder = (folder && folder[1]) ? folder + 1 : "fls0";
-	snprintf(head, sizeof head, "FXTXT - %s", folder);
+	snprintf(head, sizeof head, "FXTXT - %s",
+	         list_recent ? "\xBD\xFC\xC6\xDA" : folder);
 	ui_title(head);
 
 	static char const *lab_list[6] = { "\xD0\xC2\xBD\xA8", "\xB8\xC4\xC3\xFB", "", "", "", "\xB0\xEF\xD6\xFA" };
 	{
-		static char const *p1[5] = { "", "", "", "", "\xB0\xEF\xD6\xFA" };
+		static char const *p1[5] = { "\xBD\xFC\xC6\xDA", "", "", "", "\xB0\xEF\xD6\xFA" };
 		for (int i = 0; i < 5; i++)
 			box_lab[i] = fbar_page ? p1[i] : lab_list[i];
 		box_lab[5] = "\xB7\xAD\xD2\xB3";
@@ -1827,6 +1932,23 @@ static void draw_list(void)
 	if (list_sel >= list_top + 5)
 		list_top = list_sel - 4;
 
+	if (list_recent) {
+		for (int i = 0; i < 5; i++) {
+			int idx = list_top + i;
+			if (idx >= rec_n)
+				break;
+			int sel = (idx == rec_sel);
+			if (sel)
+				drect(0, y - 1, TEXT_W - 1, y + 7, C_BLACK);
+			char const *p = rec_at(idx);
+			char const *nm = strrchr(p, '/');
+			icon_file(1, y, sel);
+			draw_fname(10, y, nm ? nm + 1 : p, sel ? 1 : 0);
+			y += 9;
+		}
+		if (rec_n == 0)
+			draw_small(10, CONTENT_Y + 8, "(empty)", 0);
+	} else
 	for (int i = 0; i < 5; i++) {
 		int idx = list_top + i;
 		if (idx >= name_count)
@@ -1846,7 +1968,8 @@ static void draw_list(void)
 
 	{
 		char info[16];
-		int n = name_count - (strcmp(cur_dir, root_dev) ? 1 : 0);
+		int n = list_recent ? rec_n
+		      : name_count - (strcmp(cur_dir, root_dev) ? 1 : 0);
 		snprintf(info, sizeof info, "%d \xB8\xF6", n);
 		ui_info_right = 1;	/* the count sits at the very right */
 		ui_hints(hint_list, info, 0);
@@ -3233,6 +3356,28 @@ static void handle_confirm_key(key_event_t ev)
 
 static void handle_list_key(key_event_t ev)
 {
+	if (list_recent) {
+		if (ev.key == KEY_UP) {
+			if (rec_sel > 0)
+				rec_sel--;
+			list_sel = rec_sel;
+			list_top = rec_sel < 5 ? 0 : rec_sel - 4;
+		} else if (ev.key == KEY_DOWN) {
+			if (rec_sel < rec_n - 1)
+				rec_sel++;
+			list_sel = rec_sel;
+			list_top = rec_sel < 5 ? 0 : rec_sel - 4;
+		} else if (ev.key == KEY_EXE && rec_n > 0) {
+			gint_world_switch(GINT_CALL(rec_open_sel));
+			list_recent = 0;
+		} else if (ev.key == KEY_EXIT) {
+			list_recent = 0;
+			rec_sel = 0;
+			list_sel = list_top = 0;
+			gint_world_switch(GINT_CALL(fs_list_dir));
+		}
+		return;
+	}
 	switch (ev.key) {
 	case KEY_UP:
 		if (list_sel > 0) list_sel--;
@@ -3241,6 +3386,16 @@ static void handle_list_key(key_event_t ev)
 		if (list_sel < name_count - 1) list_sel++;
 		return;
 	case KEY_F1:
+		if (fbar_page) {
+			gint_world_switch(GINT_CALL(rec_load));
+			list_recent = rec_n > 0;
+			rec_sel = 0;
+			list_sel = list_top = 0;
+			if (!list_recent)
+				snprintf(status_msg, sizeof status_msg,
+				         "\xCE\xDE\xD7\xEE\xBD\xFC\xBC\xC7\xC2\xBC");
+			return;
+		}
 		name_rename = 0;
 		gint_world_switch(GINT_CALL(name_default));
 		mode = MODE_NAME;
@@ -3304,6 +3459,12 @@ static void handle_list_key(key_event_t ev)
 		dirty = 0;
 		gint_world_switch(GINT_CALL(fs_read_current));
 		apply_saved_pos();
+		{
+			char full[RECENT_LEN];
+			snprintf(full, sizeof full, "%s/%s", cur_dir,
+			         names[list_sel]);
+			rec_touch(full, cur_line + 1);
+		}
 		mode = MODE_VIEW;
 		return;
 	default:
@@ -3479,6 +3640,8 @@ have_memory:
 		list_sel = list_top = 0;
 	if (list_top > list_sel)
 		list_top = list_sel;
+	if (!rec_buf)
+		rec_buf = malloc((size_t)RECENT_MAX * RECENT_LEN);
 	app_ready = 1;
 
 	for (;;) {
