@@ -2310,7 +2310,8 @@ static void handle_search_key(key_event_t ev)
 			return;
 		}
 		if (ev.key == KEY_F1) {
-			build_search_cells();
+			/* the query lives in search_cells already; rebuilding it from
+			   the old keyboard buffer used to wipe what was just typed */
 			if (search_len) {
 				run_search();
 				mode = MODE_VIEW;
