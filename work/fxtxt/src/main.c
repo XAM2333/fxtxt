@@ -660,6 +660,7 @@ static void fs_list_dir(void);
 static int app_ready;
 static void build_paths(void);
 static void fs_read_current(void);
+static void rec_touch(char const *path, int line);
 static void undo_clear(void);
 
 
@@ -1658,6 +1659,12 @@ static void handle_name_key(key_event_t ev)
 	case KEY_EXIT:
 		/* leaving the document: remember this file's position */
 		gint_world_switch(GINT_CALL(fs_save_state));
+		if (name_count > 0 && list_sel >= 0 && list_sel < name_count) {
+			char full[80];
+			snprintf(full, sizeof full, "%s/%s", cur_dir,
+			         names[list_sel]);
+			rec_touch(full, cur_line + 1);
+		}
 		mode = MODE_LIST;
 		return;
 	default:
@@ -1871,7 +1878,8 @@ static void rec_touch(char const *path, int line)
 {
 	if (!rec_buf || !path[0])
 		return;
-	rec_load();
+	if (!rec_n)
+		rec_load();
 	int at = -1;
 	for (int i = 0; i < rec_n; i++)
 		if (!strcmp(rec_at(i), path)) {
@@ -3496,9 +3504,8 @@ static void handle_list_key(key_event_t ev)
 		build_paths();
 		{
 			char full[RECENT_LEN];
-			snprintf(full, sizeof full, "%s/%s", cur_dir,
-			         names[list_sel]);
-			rec_touch(full, -1);
+			/* recorded when the document is closed instead: writing
+			   FXTXT.REC here could stall the open on hardware */
 		}
 		cur_line = cur_col = 0;
 		view_top = hscroll = 0;
