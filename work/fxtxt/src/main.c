@@ -760,17 +760,22 @@ static void write_state(void)
 {
 	uint16_t fc[40];
 	state_fc(fc, 40);
-	int sz = (int)sizeof st;
-	BFile_Remove(fc);
-	if (BFile_Create(fc, BFile_File, &sz) < 0)
-		return;
+	/* Casio files have a fixed size set at creation, so the normal path is
+	   to overwrite byte 0 of the file we made last time. Recreating it every
+	   save made later writes disappear (only the very first page stuck). */
 	int fd = BFile_Open(fc, BFile_WriteOnly);
-	if (fd < 0)
-		return;
+	if (fd < 0) {
+		int sz = (int)sizeof st;
+		if (BFile_Create(fc, BFile_File, &sz) < 0)
+			return;
+		fd = BFile_Open(fc, BFile_WriteOnly);
+		if (fd < 0)
+			return;
+	}
+	BFile_Seek(fd, 0);	/* absolute 0: CASIOWIN seeks from the current spot */
 	BFile_Write(fd, &st, (int)sizeof st);
 	BFile_Close(fd);
 }
-
 static void fill_state(void)
 {
 	memcpy(st.magic, STATE_MAGIC, 4);
