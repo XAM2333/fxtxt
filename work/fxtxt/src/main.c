@@ -278,7 +278,7 @@ static void draw_small(int x, int y, char const *s, int invert)
 	}
 }
 
-#define SEARCH_MAX_HITS 200
+#define SEARCH_MAX_HITS 512
 static int search_hits[SEARCH_MAX_HITS];
 static int search_n;			/* matches stored */
 static int search_cur;			/* index of the match on screen */
@@ -1877,6 +1877,20 @@ static void fs_make_demo(void)
 		fwrite(gb, 1, sizeof gb, f);
 		fclose(f);
 	}
+	/* big paginated document: a token deep inside, repeated digits */
+	f = fopen("\\\\fls0\\CCZD.TXT", "wb");
+	if (f) {
+		for (int i = 1; i <= 1200; i++) {
+			char line[64];
+			int n = snprintf(line, sizeof line, "LINE %04d abcdefghij", i);
+			if (i == 900)
+				n += snprintf(line + n, sizeof line - n, " 777");
+			fwrite(line, 1, (size_t)n, f);
+			fputc(10, f);
+		}
+		fclose(f);
+	}
+
 	/* two nesting levels (txt/sub), like the reported folder layout */
 	f = fopen("\\\\fls0\\YW-JCSD.TXT", "wb");
 	if (f) {
@@ -2953,7 +2967,7 @@ static void run_search(void)
 {
 	for (int guard = 0; guard < 64; guard++) {
 		search_collect();
-		if (search_n || !chunk_more)
+		if (!chunk_more)
 			break;
 		load_chunk(chunk_base + chunk_bytes);
 		view_top = 0;
