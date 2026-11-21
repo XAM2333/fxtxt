@@ -1920,10 +1920,9 @@ static void draw_list(void)
 
 	static char const *lab_list[6] = { "\xD0\xC2\xBD\xA8", "\xB8\xC4\xC3\xFB", "", "", "", "\xB0\xEF\xD6\xFA" };
 	{
-		static char const *p1[5] = { "\xBD\xFC\xC6\xDA", "", "", "", "\xB0\xEF\xD6\xFA" };
 		for (int i = 0; i < 5; i++)
-			box_lab[i] = fbar_page ? p1[i] : lab_list[i];
-		box_lab[5] = "\xB7\xAD\xD2\xB3";
+			box_lab[i] = lab_list[i];
+		box_lab[5] = "";
 	}
 
 	int y = CONTENT_Y;
