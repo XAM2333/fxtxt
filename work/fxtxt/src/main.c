@@ -3943,16 +3943,24 @@ have_memory:
 
 	gint_world_switch(GINT_CALL(fs_list_dir));
 
-	if (!reentry) {
+	/* Starting up or coming back from the menu both land on the root folder:
+	   the document that was open is gone, and its position is remembered
+	   separately (FXTXT.CFG) for the next time it is opened. */
+	if (reentry || mode != MODE_LIST) {
+		gint_world_switch(GINT_CALL(fs_root_again));
+		fs_restore();			/* keep the state file readable, ignore the result */
 		list_sel = list_top = 0;
-
-		/* reopen the file that was being read when the app was last closed */
-		if (fs_restore())
-			mode = MODE_VIEW;
-	}
-	/* coming back from the menu the document is gone: show the folder again */
-	if (mode != MODE_LIST && !cells[0] && !ncell)
 		mode = MODE_LIST;
+		edit_mode = 0;
+		search_n = 0;
+		search_len = 0;
+		ncell = 0;
+		cur_line = 0;
+		cur_col = 0;
+		view_top = 0;
+		hscroll = 0;
+		py_reset();
+	}
 	if (list_sel >= name_count)
 		list_sel = list_top = 0;
 	if (list_top > list_sel)
