@@ -3411,12 +3411,14 @@ static void handle_list_key(key_event_t ev)
 			gint_world_switch(GINT_CALL(fs_make_demo));
 		}
 		return;
-	case KEY_F6:
+	case KEY_F5:
 		if (fbar_page) {
 			help_back = MODE_LIST;
 			mode = MODE_HELP;
 			return;
 		}
+		return;
+	case KEY_F6:
 		fbar_page = fbar_page ? 0 : 1;
 		return;
 	case KEY_DEL:
@@ -3459,12 +3461,6 @@ static void handle_list_key(key_event_t ev)
 		dirty = 0;
 		gint_world_switch(GINT_CALL(fs_read_current));
 		apply_saved_pos();
-		{
-			char full[RECENT_LEN];
-			snprintf(full, sizeof full, "%s/%s", cur_dir,
-			         names[list_sel]);
-			rec_touch(full, cur_line + 1);
-		}
 		mode = MODE_VIEW;
 		return;
 	default:
