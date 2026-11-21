@@ -3891,10 +3891,16 @@ restart:
 		/* re-entered from the main menu: the buffers from the previous run
 		   are still allocated (the add-in image is kept), keep them, but
 		   start the listing at the root folder again */
-		if (root_dev[0]) {
+		if (root_dev[0])
 			gint_world_switch(GINT_CALL(fs_root_again));
-			goto have_memory;
-		}
+		/* always come back to the list, never into the document that
+		   happened to be open when the menu key was pressed */
+		edit_mode = 0;
+		search_n = 0;
+		search_len = 0;
+		py_reset();
+		mode = MODE_LIST;
+		goto have_memory;
 		goto have_memory;
 	}
 
