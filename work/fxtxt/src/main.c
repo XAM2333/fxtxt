@@ -1802,7 +1802,21 @@ static void fs_relist_keep(void)
 static void fs_write_current(void)
 {
 	int n = encode_from_cells(rawbuf, text_max);
-	FILE *f = open_write();
+	FILE *f = NULL;
+	if (chunk_more || chunk_base > 0) {
+		/* only part of the file is in memory: overwrite that byte range
+		   instead of recreating the file, or the rest would be lost */
+		char full[80];
+		snprintf(full, sizeof full, "%s/%s", cur_dir,
+		         name_count > 0 ? names[list_sel] : "");
+		f = fopen(full, "r+b");
+		if (f && fseek(f, (long)chunk_base, SEEK_SET) != 0) {
+			fclose(f);
+			f = NULL;
+		}
+	}
+	if (!f)
+		f = open_write();
 	if (!f) {
 		snprintf(status_msg, sizeof status_msg, "\xB4\xE6\xB2\xBB\xC1\xCB");
 		return;
@@ -2920,7 +2934,13 @@ static int offset_to_line(int off)
 
 static void run_search(void)
 {
-	search_collect();
+	for (int guard = 0; guard < 64; guard++) {
+		search_collect();
+		if (search_n || !chunk_more)
+			break;
+		load_chunk(chunk_base + chunk_bytes);
+		view_top = 0;
+	}
 	if (!search_n) {
 		snprintf(status_msg, sizeof status_msg, "\xC3\xBB\xD5\xD2\xB5\xBD");
 		return;
