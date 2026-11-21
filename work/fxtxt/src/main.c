@@ -230,7 +230,6 @@ static int cell_adv(uint16_t cell)
 
 /* Chrome text may be Chinese: decode UTF-8 and draw with the small font. */
 static int ui_clip_x = 128;
-static int cfg_probe = -1;	/* line read from FXTXT.CFG, -1 = never */
 static int blink_on = 1;		/* caret phase, flips every 0.25 s */
 
 
@@ -745,130 +744,65 @@ static int state_fc(uint16_t *fc, int cap)
 	return n;
 }
 
-
-/*=== per-document position file ===========================================*/
-/* One <NAME>.POS beside each document, so a document always maps to exactly
-   one file and the count never changes. 16 bytes, fixed size, so it can be
-   overwritten in place. */
+/*=== per-document history =================================================*/
+/* Lives inside FXTXT.CFG.  Nothing else is ever created: creating files in
+   \fls0 is what made the add-in list vanish.  Records are variable length and
+   the capacity is a byte budget, not a fixed slot count. */
+#define POS_CAP 24
 typedef struct {
-	unsigned char magic[4];
+	char name[32];
 	int line;
-	int view_top;
-	int check;
-} pos_file_t;
+	int vtop;
+} pos_rec_t;
 
-static int pos_wrc = 99;	/* BFile_Open(ReadWrite) result */
-static int pos_crc = 99;	/* BFile_Create result */
-static int pos_len;		/* path length, 0 = never built */
-static unsigned char const POS_MAGIC[4] = { 'F', 'P', 'O', 'S' };
+static pos_rec_t *pos_tab;	/* heap: static RAM is only 6 KiB */
+static int pos_n;
 
-/* Build \\fls0\<dir>\<NAME>.POS from cur_dir + names[list_sel]. */
-static int pos_path(uint16_t *fc, int cap)
+static int pos_ready(void)
 {
-	static char const *const pre[2] = { "\\\\fls0", "/fls0" };
-	char name[72];
-	int k = 0;
-	for (int i = 0; names[list_sel][i] && k < (int)sizeof name - 5; i++)
-		name[k++] = names[list_sel][i];
-	/* replace the extension with .POS */
-	for (int i = k - 1; i >= 0; i--) {
-		if (name[i] == '.') { k = i; break; }
-		if (name[i] == '/' || name[i] == '\\') break;
-	}
-	name[k++] = '.';
-	name[k++] = 'P';
-	name[k++] = 'O';
-	name[k++] = 'S';
-	name[k] = 0;
+	if (!pos_tab)
+		pos_tab = malloc(sizeof(pos_rec_t) * POS_CAP);
+	return pos_tab != NULL;
+}
 
-	for (int v = 0; v < 2; v++) {
-		char full[128];
-		int n = 0;
-		for (int i = 0; pre[v][i] && n < (int)sizeof full - 1; i++)
-			full[n++] = pre[v][i];
-		/* cur_dir already starts with the volume (/fls0); the prefix above
-		   adds it too, so skip it here or the path doubles up */
-		int cs = 0;
-		if ((cur_dir[0] == '/' || cur_dir[0] == '\\') && cur_dir[1] == 'f'
-		    && cur_dir[2] == 'l' && cur_dir[3] == 's' && cur_dir[4] == '0')
-			cs = 5;
-		for (int i = cs; cur_dir[i] && n < (int)sizeof full - 1; i++) {
-			char c = cur_dir[i];
-			if (c == '/') c = '\\';
-			full[n++] = c;
+static int pos_upsert(char const *name)
+{
+	int k = -1;
+	for (int i = 0; i < pos_n; i++)
+		if (!strcmp(pos_tab[i].name, name)) { k = i; break; }
+	if (k < 0) {
+		if (pos_n < POS_CAP) k = pos_n++;
+		else {			/* full: drop the oldest entry */
+			memmove(pos_tab, pos_tab + 1, (size_t)(POS_CAP - 1) * sizeof pos_tab[0]);
+			k = POS_CAP - 1;
 		}
-		if (n && full[n - 1] != '\\' && n < (int)sizeof full - 1)
-			full[n++] = '\\';
-		for (int i = 0; name[i] && n < (int)sizeof full - 1; i++)
-			full[n++] = name[i];
-		full[n] = 0;
-
-		int m = 0;
-		for (int i = 0; full[i] && m < cap - 1; i++)
-			fc[m++] = (unsigned char)full[i];
-		fc[m] = 0;
-		pos_len = m;
-		if (BFile_Open(fc, BFile_ReadOnly) >= 0)
-			return m;
-		/* a Path that cannot even be opened is still the path we must
-		   create, so return it instead of 0 */
-		return m;
 	}
+	snprintf(pos_tab[k].name, sizeof pos_tab[k].name, "%s", name);
+	return k;
+}
+
+/* called while the document is still open */
+static void pos_store(void)
+{
+	if (!pos_ready()) return;
+	if (name_count <= 0 || list_sel < 0 || list_sel >= name_count || is_dir[list_sel])
+		return;
+	int k = pos_upsert(names[list_sel]);
+	pos_tab[k].line = offset_to_line(row_start(view_top));
+	if (pos_tab[k].line < 0) pos_tab[k].line = 0;
+	pos_tab[k].vtop = view_top;
+}
+
+static int pos_lookup(char const *name, int *line, int *vtop)
+{
+	if (!pos_ready()) return 0;
+	for (int i = pos_n - 1; i >= 0; i--)
+		if (!strcmp(pos_tab[i].name, name)) {
+			*line = pos_tab[i].line;
+			*vtop = pos_tab[i].vtop;
+			return 1;
+		}
 	return 0;
-}
-
-static int pos_read(int *line, int *vtop)
-{
-	uint16_t fc[80];
-	if (!pos_path(fc, 80))
-		return 0;
-	int fd = BFile_Open(fc, BFile_ReadOnly);
-	if (fd < 0)
-		return 0;
-	pos_file_t p;
-	int n = BFile_Read(fd, &p, (int)sizeof p, 0);
-	BFile_Close(fd);
-	if (n != (int)sizeof p || memcmp(p.magic, POS_MAGIC, 4))
-		return 0;
-	if (p.check != ((int)POS_MAGIC[0] ^ (p.line * 31) ^ p.view_top))
-		return 0;
-	*line = p.line;
-	*vtop = p.view_top;
-	return 1;
-}
-
-static void pos_write(void)
-{
-	uint16_t fc[80];
-	if (!pos_path(fc, 80))
-		return;
-	pos_file_t p;
-	memcpy(p.magic, POS_MAGIC, 4);
-	p.line = offset_to_line(row_start(view_top));
-	if (p.line < 0) p.line = 0;
-	p.view_top = view_top;
-	p.check = (int)POS_MAGIC[0] ^ (p.line * 31) ^ p.view_top;
-
-	/* rewrite in place first; a unit that refuses falls back to recreate with
-	   the same name, which keeps one file per document either way */
-	int fd = BFile_Open(fc, BFile_ReadWrite);
-	pos_wrc = fd;
-	if (fd >= 0) {
-		BFile_Seek(fd, 0);
-		BFile_Write(fd, &p, (int)sizeof p);
-		BFile_Close(fd);
-		return;
-	}
-	int sz = (int)sizeof p;
-	BFile_Remove(fc);
-	pos_crc = BFile_Create(fc, BFile_File, &sz);
-	if (pos_crc < 0)
-		return;
-	fd = BFile_Open(fc, BFile_WriteOnly);
-	if (fd < 0)
-		return;
-	BFile_Write(fd, &p, (int)sizeof p);
-	BFile_Close(fd);
 }
 
 static int read_state(save_state_t *out)
@@ -878,30 +812,80 @@ static int read_state(save_state_t *out)
 	int fd = BFile_Open(fc, BFile_ReadOnly);
 	if (fd < 0)
 		return 0;
-	int n = BFile_Read(fd, out, (int)sizeof *out, 0);
+	
+	unsigned char *blob = malloc(1024);
+	if (!blob) {
+		BFile_Close(fd);
+		return 0;
+	}
+	int n = BFile_Read(fd, blob, 1024, 0);
 	BFile_Close(fd);
-	return n == (int)sizeof *out && !memcmp(out->magic, STATE_MAGIC, 4);
+	if (n < (int)sizeof(save_state_t)) {
+		free(blob);
+		return 0;
+	}
+	memcpy(out, blob, sizeof *out);
+	if (memcmp(out->magic, STATE_MAGIC, 4)) {
+		free(blob);
+		return 0;
+	}
+	int off = (int)sizeof *out;
+	if (n >= off + (int)sizeof pos_n) {
+		int cnt = 0;
+		memcpy(&cnt, blob + off, sizeof cnt);
+		if (cnt > POS_CAP) cnt = POS_CAP;
+		off += (int)sizeof cnt;
+		int got = 0;
+		while (got < cnt && n >= off + (int)sizeof(pos_rec_t)) {
+			memcpy(&pos_tab[got], blob + off, sizeof(pos_rec_t));
+			pos_tab[got].name[sizeof pos_tab[got].name - 1] = 0;
+			off += (int)sizeof(pos_rec_t);
+			got++;
+		}
+		pos_n = got;
+	}
+	free(blob);
+	return 1;
 }
 
 static void write_state(void)
 {
 	uint16_t fc[40];
 	state_fc(fc, 40);
-	/* Casio files have a fixed size set at creation, so the normal path is
-	   to overwrite byte 0 of the file we made last time. Recreating it every
-	   save made later writes disappear (only the very first page stuck). */
-	int fd = BFile_Open(fc, BFile_WriteOnly);
-	if (fd < 0) {
-		int sz = (int)sizeof st;
-		if (BFile_Create(fc, BFile_File, &sz) < 0)
-			return;
-		fd = BFile_Open(fc, BFile_WriteOnly);
-		if (fd < 0)
-			return;
+
+	/* header + count + records, one blob, one file name, fixed 4 KiB size so
+	   later saves only ever overwrite the file that already exists */
+	
+	unsigned char *blob = malloc(1024);
+	if (!blob)
+		return;
+	memset(blob, 0, 1024);
+	memcpy(blob, &st, sizeof st);
+	int off = (int)sizeof st;
+	memcpy(blob + off, &pos_n, sizeof pos_n);
+	off += (int)sizeof pos_n;
+	for (int i = 0; i < pos_n && off + (int)sizeof(pos_rec_t) <= 1024; i++) {
+		memcpy(blob + off, &pos_tab[i], sizeof(pos_rec_t));
+		off += (int)sizeof(pos_rec_t);
 	}
-	BFile_Seek(fd, 0);	/* absolute 0: CASIOWIN seeks from the current spot */
-	BFile_Write(fd, &st, (int)sizeof st);
-	BFile_Close(fd);
+
+	int fd = BFile_Open(fc, BFile_ReadWrite);
+	if (fd >= 0) {
+		BFile_Seek(fd, 0);
+		BFile_Write(fd, blob, 1024);
+		BFile_Close(fd);
+		return;
+	}
+	int sz = 1024;
+	BFile_Remove(fc);
+	if (BFile_Create(fc, BFile_File, &sz) >= 0) {
+		fd = BFile_Open(fc, BFile_WriteOnly);
+		if (fd >= 0) {
+			BFile_Write(fd, blob, 1024);
+			BFile_Close(fd);
+		}
+	}
+	free(blob);
 }
 static void fill_state(void)
 {
@@ -942,7 +926,7 @@ static void fs_save_state(void)
 	save_state_t prev;
 	int have_prev = read_state(&prev);
 	fill_state();
-	pos_write();
+	pos_store();
 	if (have_prev && !st.has_file) {
 		memcpy(st.name, prev.name, sizeof st.name);
 		st.has_file = prev.has_file;
@@ -1436,8 +1420,10 @@ static void fs_list_dir_depth(int depth)
 /* Restore the position remembered for the file we have just opened. */
 static void apply_saved_pos(void)
 {
+	if (name_count <= 0 || list_sel < 0 || list_sel >= name_count)
+		return;
 	int line, vtop;
-	if (!pos_read(&line, &vtop))
+	if (!pos_lookup(names[list_sel], &line, &vtop))
 		return;
 	int tl = line_count();
 	if (tl <= 0)
@@ -1449,8 +1435,8 @@ static void apply_saved_pos(void)
 	if (view_top < 0) view_top = 0;
 	cur_col = 0;
 	hscroll = 0;
-	cfg_probe = cur_line;
 }
+
 static void fs_enter_dir(void)
 {
 	char next[64];
@@ -2468,12 +2454,6 @@ static void draw_view(void)
 				snprintf(info, sizeof info, "%d/%d",
 				         chunk_rows + view_top + 1,
 				         total_rows > 0 ? total_rows : rows_total);
-		{
-			size_t l = strlen(info);
-			if (l + 14 < sizeof info)
-				snprintf(info + l, sizeof info - l,
-					 " P%d/%d/%d", pos_len, pos_wrc, pos_crc);
-		}
 			ui_info_right = 1;
 		}
 		ui_hints(edit_mode ? (cn_mode ? hint_edit_cn : hint_edit_en) : hint_view, info,
