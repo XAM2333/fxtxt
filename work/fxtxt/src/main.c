@@ -2032,6 +2032,10 @@ static int rec_line_of(char const *path)
 /* Jump to the remembered line of the document that was just read. */
 static void resume_line(void)
 {
+	/* the REC file is only read on demand now that the 近期 page is
+	   gone; make sure the table is in memory before looking up */
+	if (!rec_n)
+		gint_world_switch(GINT_CALL(rec_load));
 	if (name_count <= 0 || list_sel < 0 || list_sel >= name_count)
 		return;
 	char full[80];
