@@ -2196,7 +2196,15 @@ static void draw_view(void)
 	}
 
 	static char const *lab_read[6] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "", "" };
+	/* search result: 上一 / 下一 / 再查 ... 退出 / 帮助 */
+	static char const *lab_hit[6] = {
+		"\xC9\xCF\xD2\xBB", "\xCF\xC2\xD2\xBB", "\xD4\xD9\xB2\xE9",
+		"", "\xCD\xCB\xB3\xF6", "\xB0\xEF\xD6\xFA"
+	};
 	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xCD\xCB\xB3\xF6", "\xB4\xF3\xD0\xB4", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
+	if (!edit_mode && search_n > 0)
+		for (int i = 0; i < 6; i++)
+			box_lab[i] = lab_hit[i];
 	{
 		static char const *r1[5] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA" };
 		static char const *e1[5] = { "\xB3\xB7\xCF\xFA", "\xB2\xE9\xD5\xD2",
@@ -3075,9 +3083,18 @@ static void handle_view_key(key_event_t ev)
 			search_show();
 			return;
 		}
-		if (ev.key == KEY_F4) {
+		if (ev.key == KEY_F2 || ev.key == KEY_F4) {
 			search_cur = (search_cur + 1) % search_n;
 			search_show();
+			return;
+		}
+		if (ev.key == KEY_F3) {		/* back to the query page */
+			mode = MODE_SEARCH;
+			return;
+		}
+		if (ev.key == KEY_F5) {		/* leave the result state */
+			search_n = 0;
+			search_len = 0;
 			return;
 		}
 	}
