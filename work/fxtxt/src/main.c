@@ -661,6 +661,8 @@ static int app_ready;
 static void build_paths(void);
 static void fs_read_current(void);
 static void rec_touch(char const *path, int line);
+static int rec_line_of(char const *path);
+static void resume_line(void);
 static void undo_clear(void);
 
 
@@ -1897,6 +1899,36 @@ static void rec_touch(char const *path, int line)
 	snprintf(rec_at(0), RECENT_LEN, "%s", path);
 	rec_line[0] = line;
 	rec_save();
+}
+
+/* Line this file was left on last time, or 0 when it is unknown. */
+static int rec_line_of(char const *path)
+{
+	if (!rec_buf || !path[0])
+		return 0;
+	rec_load();
+	for (int i = 0; i < rec_n; i++)
+		if (!strcmp(rec_at(i), path))
+			return rec_line[i];
+	return 0;
+}
+
+/* Jump to the remembered line of the document that was just read. */
+static void resume_line(void)
+{
+	if (name_count <= 0 || list_sel < 0 || list_sel >= name_count)
+		return;
+	char full[80];
+	snprintf(full, sizeof full, "%s/%s", cur_dir, names[list_sel]);
+	int line = rec_line_of(full);
+	if (line <= 1)
+		return;
+	int total = line_count();
+	if (line > total)
+		line = total;
+	cur_line = line - 1;
+	cur_col = 0;
+	view_top = row_of_cell(line_start(cur_line));
 }
 
 /* open the highlighted recent entry, resuming its line */
@@ -3513,6 +3545,7 @@ static void handle_list_key(key_event_t ev)
 		dirty = 0;
 		gint_world_switch(GINT_CALL(fs_read_current));
 		apply_saved_pos();
+		resume_line();
 		mode = MODE_VIEW;
 		return;
 	default:
