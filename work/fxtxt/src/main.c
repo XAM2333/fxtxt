@@ -788,7 +788,11 @@ static void fill_state(void)
 		st.name[sizeof st.name - 1] = 0;
 		st.view_top = view_top;
 		st.hscroll = hscroll;
-		st.cur_line = cur_line;
+		/* remember the page, not the caret: scrolling only moves view_top,
+		   so saving cur_line kept an old line and the position stopped
+		   updating after the first reopen */
+		st.cur_line = offset_to_line(row_start(view_top));
+		if (st.cur_line < 0) st.cur_line = 0;
 		st.cur_col = cur_col;
 		st.text_len = ncell;
 	} else {
