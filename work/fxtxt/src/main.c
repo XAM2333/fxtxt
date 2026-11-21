@@ -52,7 +52,7 @@ static int text_max = TEXT_MIN;
 #define CELL_NL    0xFFFFu
 #define CELL_CJK   0x0100u
 
-enum { MODE_LIST = 0, MODE_VIEW, MODE_KEYB, MODE_HELP, MODE_NAME, MODE_SEARCH, MODE_CONFIRM,
+enum { MODE_LIST = 0, MODE_VIEW, MODE_KEYB, MODE_HELP, MODE_NAME, MODE_SEARCH, MODE_CONFIRM, MODE_BOOK,
        };
 enum { PAGE_PINYIN = 0, PAGE_PUNCT, PAGE_LOWER, PAGE_UPPER, PAGE_DIGIT, PAGE_SYMBOL };
 #define PAGE_COUNT 6
@@ -350,7 +350,9 @@ static void ui_hints(char const *hints, char const *info, int show_lock)
 
 static char const *box_lab[6] = { 0, 0, 0, 0, 0, 0 };
 static int help_back;		/* mode to return to when help closes */
-static int fbar_page;	/* 0: page one, 1: page two (F6 flips) */
+static int fbar_page;
+static int book_sel;
+static int book_page;	/* 0: page one, 1: page two (F6 flips) */
 
 /* Six cups along the bottom edge (F1..F6): no bottom edge, no gaps, and each
    one carries its own short label. */
@@ -762,11 +764,12 @@ static int state_fc(uint16_t *fc, int cap)
 /* Lives inside FXTXT.CFG.  Nothing else is ever created: creating files in
    \fls0 is what made the add-in list vanish.  Records are variable length and
    the capacity is a byte budget, not a fixed slot count. */
-#define POS_CAP 24
+#define POS_CAP 12
 typedef struct {
 	char name[32];
 	int line;
 	int vtop;
+	int bm[6];		/* bookmark: absolute display row + 1, 0 = empty */
 } pos_rec_t;
 
 static pos_rec_t *pos_tab;	/* heap: static RAM is only 6 KiB */
@@ -3280,8 +3283,83 @@ static void open_keyboard(int target, int page)
 	mode = MODE_KEYB;
 }
 
+static void draw_book(void)
+{
+	ui_no_cups = 0;
+	for (int i = 0; i < 6; i++)
+		box_lab[i] = NULL;
+	box_lab[0] = "\xB1\xA3\xB4\xE6";
+	box_lab[5] = "\xB0\xEF\xD6\xFA";
+	ui_title("\xCA\xE9\xC7\xA9");
+	int k = (pos_ready() && name_count > 0 && list_sel < name_count
+		 && !is_dir[list_sel]) ? pos_upsert(names[list_sel]) : -1;
+	int y = CONTENT_Y;
+	for (int i = 0; i < 6; i++, y += 9) {
+		int p = k >= 0 ? pos_tab[k].bm[i] : 0;
+		char line[24];
+		if (p > 0) snprintf(line, sizeof line, "%d:%d", i + 1, p);
+		else snprintf(line, sizeof line, "%d:-", i + 1);
+		draw_ui(6, y, line, i == book_sel);
+	}
+}
+
+static void handle_book_key(key_event_t ev)
+{
+	if (ev.key == KEY_UP && book_sel > 0) book_sel--;
+	else if (ev.key == KEY_DOWN && book_sel < 5) book_sel++;
+	else if (ev.key == KEY_EXIT) mode = MODE_VIEW;
+	else if ((ev.key == KEY_F1 || ev.key == KEY_DEL || ev.key == KEY_EXE)
+		 && name_count > 0 && list_sel < name_count && pos_ready()) {
+		int k = pos_upsert(names[list_sel]);
+		if (ev.key == KEY_F1) { pos_tab[k].bm[book_sel] = book_page; }
+		else if (ev.key == KEY_DEL) { pos_tab[k].bm[book_sel] = 0; }
+		else {
+			int p = pos_tab[k].bm[book_sel];
+			if (p > 0) {
+				int rel = p - 1 - chunk_rows;
+				if (rel < 0) rel = 0;
+				int lim = row_count() - rows();
+				if (rel > lim) rel = lim > 0 ? lim : 0;
+				view_top = rel;
+				mode = MODE_VIEW;
+			}
+		}
+	}
+}
+
 static void handle_view_key(key_event_t ev)
 {
+	if (!edit_mode && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
+		book_sel = 0;
+		book_page = chunk_rows + view_top + 1;
+		mode = MODE_BOOK;
+		return;
+	}
+	if (!edit_mode && (ev.shift || ev.alpha)) {
+		int slot = 0;
+		if (ev.key >= KEY_F1 && ev.key <= KEY_F6)
+			slot = (int)(ev.key - KEY_F1) + 1;
+		if (slot && pos_ready() && name_count > 0 && list_sel < name_count
+		    && !is_dir[list_sel]) {
+			int k = pos_upsert(names[list_sel]);
+			int page = chunk_rows + view_top + 1;
+			if (ev.shift) {
+				pos_tab[k].bm[slot - 1] = page;
+				return;
+			}
+			int p = pos_tab[k].bm[slot - 1];
+			if (p <= 0)
+				return;
+			int rel = p - 1 - chunk_rows;
+			if (rel < 0)
+				rel = 0;
+			int lim = row_count() - rows();
+			if (rel > lim)
+				rel = lim > 0 ? lim : 0;
+			view_top = rel;
+			return;
+		}
+	}
 	if (!edit_mode && search_n > 0) {
 		/* F1 / F4 walk the matches; their normal meaning returns when
 		   no search is active */
@@ -4120,6 +4198,8 @@ have_memory:
 			draw_search();
 		else if (mode == MODE_CONFIRM)
 			draw_confirm();
+		else if (mode == MODE_BOOK)
+			draw_book();
 		else
 			draw_keyboard();
 
@@ -4160,7 +4240,9 @@ have_memory:
 			handle_search_key(ev);
 		} else if (mode == MODE_CONFIRM) {
 			handle_confirm_key(ev);
-		} else if (mode == MODE_HELP) {
+		} else if (mode == MODE_BOOK) {
+			handle_book_key(ev);
+} else if (mode == MODE_HELP) {
 			if (!ev_repeat && ev.key == KEY_LEFT)
 				help_page = (help_page + 2) % 3;
 			else if (!ev_repeat && ev.key == KEY_RIGHT)
