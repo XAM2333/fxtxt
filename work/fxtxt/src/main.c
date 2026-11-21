@@ -179,13 +179,6 @@ static void put_px(int x, int y, int on, int invert)
 
 static void blit8(int x, int y, unsigned char const *g, int invert)
 {
-	if (invert) {
-		/* a search hit has no black bar behind it: lay one down first,
-		   then the glyph is punched out of it below */
-		for (int r = 0; r < 8; r++)
-			for (int c = 0; c < 8; c++)
-				px_on(x + c, y + r);
-	}
 	for (int r = 0; r < 8; r++) {
 		unsigned b = g[r];
 		for (int c = 0; c < 8; c++)
@@ -202,6 +195,13 @@ static void draw_cell(int x, int y, uint16_t cell, int invert)
 		int i = (int)cell;
 		if (i < 0 || i >= FONT_COUNT)
 			i = '?' - FONT_FIRST;
+		if (invert) {
+			/* white on black: the box is exactly this glyph's advance,
+			   so a wide left bearing cannot eat the previous column */
+			for (int r = 0; r < 8; r++)
+				for (int c = 0; c < font_adv8[i]; c++)
+					px_on(x + c, y + r);
+		}
 		blit8(x - font_lb8[i], y, font_ascii8[i], invert);
 		return;
 	}
