@@ -3669,7 +3669,11 @@ restart:
 	}
 
 	text_max = 0;
-	for (int cap = 32768; cap >= TEXT_MIN; cap /= 2) {
+	static int const tiers[] = { 32768, 28672, 24576, 20480, 16384, 12288, 8192, 4096 };
+	for (unsigned ti = 0; ti < sizeof tiers / sizeof tiers[0]; ti++) {
+		int cap = tiers[ti];
+		if (cap < TEXT_MIN)
+			continue;
 		uint16_t *c = malloc((size_t)cap * sizeof(uint16_t));
 		if (!c)
 			continue;
