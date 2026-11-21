@@ -348,7 +348,7 @@ static void ui_fkeys(void)
 		int x = i * 21;
 		drect(x, BOX_Y, x, 63, C_BLACK);          /* dividers to the bottom */
 	}
-	if (edit_mode || mode == MODE_LIST) {
+	if (edit_mode) {
 		/* F6 flips the bar: a centred 5x7 solid triangle */
 		int cy = (BOX_Y + 63) / 2;
 		for (int c = 0; c < 5; c++) {
@@ -1876,6 +1876,8 @@ static void rec_touch(char const *path, int line)
 			at = i;
 			break;
 		}
+	if (line < 0)
+		line = (at >= 0) ? rec_line[at] : 1;
 	if (at < 0)
 		at = (rec_n < RECENT_MAX) ? rec_n++ : RECENT_MAX - 1;
 	for (int i = at; i > 0; i--) {
@@ -1919,7 +1921,7 @@ static void draw_list(void)
 	         list_recent ? "\xBD\xFC\xC6\xDA" : folder);
 	ui_title(head);
 
-	static char const *lab_list[6] = { "\xD0\xC2\xBD\xA8", "\xB8\xC4\xC3\xFB", "", "", "", "\xB0\xEF\xD6\xFA" };
+	static char const *lab_list[6] = { "\xD0\xC2\xBD\xA8", "\xB8\xC4\xC3\xFB", "\xBD\xFC\xC6\xDA", "", "", "\xB0\xEF\xD6\xFA" };
 	{
 		for (int i = 0; i < 5; i++)
 			box_lab[i] = lab_list[i];
@@ -3425,6 +3427,16 @@ static void handle_list_key(key_event_t ev)
 			mode = MODE_NAME;
 		return;
 	case KEY_F3:
+		if (!ev.shift) {
+			gint_world_switch(GINT_CALL(rec_load));
+			list_recent = rec_n > 0;
+			rec_sel = 0;
+			list_sel = list_top = 0;
+			if (!list_recent)
+				snprintf(status_msg, sizeof status_msg,
+				         "\xCE\xDE\xD7\xEE\xBD\xFC\xBC\xC7\xC2\xBC");
+			return;
+		}
 		if (ev.shift) {
 			/* test helper, not advertised */
 			gint_world_switch(GINT_CALL(fs_make_demo));
@@ -3474,6 +3486,12 @@ static void handle_list_key(key_event_t ev)
 			return;
 		}
 		build_paths();
+		{
+			char full[RECENT_LEN];
+			snprintf(full, sizeof full, "%s/%s", cur_dir,
+			         names[list_sel]);
+			rec_touch(full, -1);
+		}
 		cur_line = cur_col = 0;
 		view_top = hscroll = 0;
 		edit_mode = 0;
