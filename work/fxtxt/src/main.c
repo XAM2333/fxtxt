@@ -4205,6 +4205,12 @@ have_memory:
 
 		key_event_t ev = next_event();
 		status_sticky = 0;
+		if (mode == MODE_VIEW && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
+			book_sel = 0;
+			book_page = chunk_rows + view_top + 1;
+			mode = MODE_BOOK;
+			continue;
+		}
 
 		if (ev.key == KEY_ACON && ev.shift) {
 			/* SHIFT+AC/ON powers off; a bare AC/ON does nothing */
