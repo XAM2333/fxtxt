@@ -336,6 +336,7 @@ static void ui_hints(char const *hints, char const *info, int show_lock)
 }
 
 static char const *box_lab[6] = { 0, 0, 0, 0, 0, 0 };
+static int fbar_page;	/* 0: page one, 1: page two (F6 flips) */
 
 /* Six cups along the bottom edge (F1..F6): no bottom edge, no gaps, and each
    one carries its own short label. */
@@ -1804,8 +1805,12 @@ static void draw_list(void)
 	ui_title(head);
 
 	static char const *lab_list[6] = { "\xD0\xC2\xBD\xA8", "\xB8\xC4\xC3\xFB", "", "", "", "\xB0\xEF\xD6\xFA" };
-	for (int i = 0; i < 6; i++)
-		box_lab[i] = lab_list[i];
+	{
+		static char const *p1[5] = { "", "", "", "", "\xB0\xEF\xD6\xFA" };
+		for (int i = 0; i < 5; i++)
+			box_lab[i] = fbar_page ? p1[i] : lab_list[i];
+		box_lab[5] = "\xB7\xAD\xD2\xB3";
+	}
 
 	int y = CONTENT_Y;
 	if (list_sel < list_top)
@@ -1905,8 +1910,16 @@ static void draw_view(void)
 
 	static char const *lab_read[6] = { "", "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA" };
 	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xB2\xE9\xD5\xD2", "\xCD\xCB\xB3\xF6", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
-	for (int i = 0; i < 6; i++)
-		box_lab[i] = edit_mode ? lab_edit[i] : lab_read[i];
+	{
+		static char const *r1[5] = { "", "", "", "", "\xB0\xEF\xD6\xFA" };
+		static char const *e1[5] = { "\xB3\xB7\xCF\xFA", "\xB4\xF3\xD0\xB4",
+		                             "", "", "\xB0\xEF\xD6\xFA" };
+		for (int i = 0; i < 5; i++)
+			box_lab[i] = edit_mode
+				? (fbar_page ? e1[i] : lab_edit[i])
+				: (fbar_page ? r1[i] : lab_read[i]);
+		box_lab[5] = "\xB7\xAD\xD2\xB3";
+	}
 
 	int caret_x = -1, caret_y = -1;
 	int r = rows(), y = CONTENT_Y, row = view_top;
@@ -2799,7 +2812,15 @@ static void handle_view_key(key_event_t ev)
 		}
 	}
 
-	if (edit_mode && ev.key == KEY_F6) {
+	if (ev.key == KEY_F6) {
+		fbar_page = fbar_page ? 0 : 1;
+		return;
+	}
+	if (edit_mode && fbar_page && ev.key == KEY_F1) {
+		undo_apply();
+		return;
+	}
+	if (edit_mode && fbar_page && ev.key == KEY_F2) {
 		caps_on = !caps_on;
 		return;
 	}
@@ -2923,8 +2944,12 @@ static void handle_view_key(key_event_t ev)
 			open_keyboard(0, PAGE_PUNCT);
 		return;
 	case KEY_F6:
-		help_back = MODE_VIEW;
-		mode = MODE_HELP;
+		if (!edit_mode && fbar_page && ev.key == KEY_F5) {
+			help_back = MODE_VIEW;
+			mode = MODE_HELP;
+			return;
+		}
+		fbar_page = fbar_page ? 0 : 1;
 		return;
 	case KEY_F3:
 		if (edit_mode && dirty) {
@@ -3221,8 +3246,12 @@ static void handle_list_key(key_event_t ev)
 		}
 		return;
 	case KEY_F6:
-		help_back = MODE_LIST;
-		mode = MODE_HELP;
+		if (fbar_page) {
+			help_back = MODE_LIST;
+			mode = MODE_HELP;
+			return;
+		}
+		fbar_page = fbar_page ? 0 : 1;
 		return;
 	case KEY_DEL:
 		if (name_count == 0)
