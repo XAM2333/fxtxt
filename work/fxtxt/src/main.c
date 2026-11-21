@@ -3206,12 +3206,6 @@ static void handle_view_key(key_event_t ev)
 		search_n = 0;
 		search_len = 0;
 		gint_world_switch(GINT_CALL(fs_save_state));
-		if (name_count > 0 && list_sel >= 0 && list_sel < name_count) {
-			char full[80];
-			snprintf(full, sizeof full, "%s/%s", cur_dir,
-			         names[list_sel]);
-			rec_touch(full, cur_line + 1);
-		}
 		mode = MODE_LIST;
 		return;
 	case KEY_UP:
