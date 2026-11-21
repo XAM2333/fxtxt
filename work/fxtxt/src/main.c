@@ -681,6 +681,21 @@ static void fs_read_current(void);
 static void rec_touch(char const *path, int line);
 static int rec_line_of(char const *path);
 static void resume_line(void);
+
+/* Deferred history write.  A stdio call made while the document buffers hold
+   nearly all of the heap resets the calculator, so the reader only remembers
+   where it stopped; the file is written at a moment when the heap is free
+   (leaving for the main menu, powering off, and at the next start-up). */
+static int rec_pend;
+static int rec_pend_line;	/* location lives in cur_path */
+
+static void rec_flush(void)
+{
+	if (!rec_pend)
+		return;
+	rec_pend = 0;
+	rec_touch(cur_path, rec_pend_line);
+}
 static void undo_clear(void);
 
 
@@ -3244,6 +3259,12 @@ static void handle_view_key(key_event_t ev)
 		search_n = 0;
 		search_len = 0;
 		gint_world_switch(GINT_CALL(fs_save_state));
+		{
+			/* remember the position, write it when the heap is free */
+			build_paths();	/* cur_path now names this file */
+			rec_pend_line = cur_line + 1;
+			rec_pend = 1;
+		}
 		mode = MODE_LIST;
 		return;
 	case KEY_UP:
@@ -3845,6 +3866,8 @@ restart:
 		goto have_memory;
 	}
 
+	rec_flush();		/* history the previous session could not write */
+
 	text_max = 0;
 	for (int cap = 32768; cap >= TEXT_MIN; cap /= 2) {
 		uint16_t *c = malloc((size_t)cap * sizeof(uint16_t));
@@ -3926,6 +3949,7 @@ have_memory:
 			/* SHIFT+AC/ON powers off; a bare AC/ON does nothing */
 			gint_world_switch(GINT_CALL(fs_save_state));
 			app_release();
+			rec_flush();
 			gint_poweroff(1);
 			break;
 		}
@@ -3942,6 +3966,7 @@ have_memory:
 			/* the OS heap outlives this instance: hand the buffers
 			   back before parking in the menu, then rebuild */
 			app_release();
+			rec_flush();
 			gint_osmenu();
 			gint_setrestart(1);
 			goto restart;
