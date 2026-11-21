@@ -810,7 +810,7 @@ static void fs_save_state(void)
 		memcpy(st.name, prev.name, sizeof st.name);
 		st.has_file = prev.has_file;
 		st.view_top = prev.view_top;
-		st.hscroll = prev.hscroll;
+		st.hscroll = 0;	/* a sideways scroll must not survive a session */
 		st.cur_line = prev.cur_line;
 		st.cur_col = prev.cur_col;
 		st.text_len = prev.text_len;
