@@ -1921,7 +1921,7 @@ static void draw_view(void)
 	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xB4\xF3\xD0\xB4", "\xCD\xCB\xB3\xF6", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
 	{
 		static char const *r1[5] = { "", "", "", "", "\xB0\xEF\xD6\xFA" };
-		static char const *e1[5] = { "\xB3\xB7\xCF\xFA", "\xB4\xF3\xD0\xB4",
+		static char const *e1[5] = { "\xB3\xB7\xCF\xFA", "\xB2\xE9\xD5\xD2",
 		                             "", "", "\xB0\xEF\xD6\xFA" };
 		for (int i = 0; i < 5; i++)
 			box_lab[i] = edit_mode
