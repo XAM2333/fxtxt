@@ -3611,6 +3611,7 @@ static void handle_confirm_key(key_event_t ev)
 			py_reset();
 			gint_world_switch(GINT_CALL(fs_read_current));
 			mode = MODE_VIEW;
+			apply_saved_pos();	/* jump back to where this file was left */
 		} else if (ev.key == KEY_EXIT) {
 			mode = MODE_VIEW;
 		}
