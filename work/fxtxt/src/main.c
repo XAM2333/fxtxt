@@ -370,8 +370,13 @@ static void ui_fkeys(void)
 				px_on(114 + c, cy + r);
 		}
 	}
+	static char const *hit[6] = {
+		"\xC9\xCF\xD2\xBB", "\xCF\xC2\xD2\xBB", "\xD4\xD9\xB2\xE9",
+		"", "\xCD\xCB\xB3\xF6", "\xB0\xEF\xD6\xFA"
+	};
+	int hit_mode = (!edit_mode && search_n > 0);
 	for (int i = 0; i < 6; i++) {
-		char const *s = box_lab[i];
+		char const *s = hit_mode ? hit[i] : box_lab[i];
 		if (i == 5 && edit_mode)
 			continue;	/* the ▶ icon lives there */
 		if (!s || !s[0])
