@@ -2943,6 +2943,8 @@ static void handle_view_key(key_event_t ev)
 		}
 	}
 
+	if (!edit_mode && ev.key == KEY_F2)
+		ev.key = KEY_F3;	/* F2 编辑 is the old F3 */
 	if (!edit_mode && ev.key == KEY_F1) {
 		mode = MODE_SEARCH;
 		py_reset();
@@ -3094,7 +3096,6 @@ static void handle_view_key(key_event_t ev)
 		}
 		fbar_page = fbar_page ? 0 : 1;
 		return;
-	case KEY_F2:
 	case KEY_F3:
 		if (edit_mode && dirty) {
 			confirm_kind = 1;
