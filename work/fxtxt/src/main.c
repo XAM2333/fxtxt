@@ -1925,7 +1925,7 @@ static void draw_list(void)
 	{
 		for (int i = 0; i < 5; i++)
 			box_lab[i] = lab_list[i];
-		box_lab[5] = "";
+		box_lab[5] = "\xB0\xEF\xD6\xFA";
 	}
 
 	int y = CONTENT_Y;
@@ -2042,7 +2042,7 @@ static void draw_view(void)
 		if (crow >= view_top + rows()) view_top = crow - rows() + 1;
 	}
 
-	static char const *lab_read[6] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA", "" };
+	static char const *lab_read[6] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "", "" };
 	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xCD\xCB\xB3\xF6", "\xB4\xF3\xD0\xB4", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
 	{
 		static char const *r1[5] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA" };
@@ -2052,7 +2052,7 @@ static void draw_view(void)
 			box_lab[i] = edit_mode
 				? (fbar_page ? e1[i] : lab_edit[i])
 				: lab_read[i];
-		box_lab[5] = edit_mode ? "\xB7\xAD\xD2\xB3" : "";
+		box_lab[5] = edit_mode ? "\xB7\xAD\xD2\xB3" : "\xB0\xEF\xD6\xFA";
 	}
 
 	int caret_x = -1, caret_y = -1;
@@ -2959,8 +2959,12 @@ static void handle_view_key(key_event_t ev)
 		return;
 	}
 	if (ev.key == KEY_F6) {
-		if (edit_mode)
+		if (edit_mode) {
 			fbar_page = fbar_page ? 0 : 1;
+		} else {
+			help_back = MODE_VIEW;
+			mode = MODE_HELP;
+		}
 		return;
 	}
 	if (edit_mode && fbar_page && ev.key == KEY_F1) {
