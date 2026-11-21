@@ -868,6 +868,17 @@ static int fs_load_state(void)
 
 static int restore_flag;
 
+/* Drop back to the volume root and refresh the listing (runs in the OS world,
+   because it has to ask the file system for the entries). */
+static void fs_root_again(void)
+{
+	strncpy(cur_dir, root_dev, sizeof cur_dir - 1);
+	cur_dir[sizeof cur_dir - 1] = 0;
+	fs_list_dir();
+	list_sel = 0;
+	list_top = 0;
+}
+
 static void fs_restore_call(void)
 {
 	restore_flag = fs_load_state();
@@ -1291,7 +1302,7 @@ static void apply_saved_pos(void)
 	save_state_t s;
 	if (!read_state(&s) || !s.has_file || !s.name[0])
 		return;
-	if (strcmp(s.name, names[list_sel]) || strcmp(s.dir, cur_dir))
+	if (strcmp(s.name, names[list_sel]))
 		return;
 	int tl = line_count();
 	view_top = s.view_top;
@@ -3878,7 +3889,12 @@ restart:
 
 	if (cells) {
 		/* re-entered from the main menu: the buffers from the previous run
-		   are still allocated (the add-in image is kept), keep them */
+		   are still allocated (the add-in image is kept), keep them, but
+		   start the listing at the root folder again */
+		if (root_dev[0]) {
+			gint_world_switch(GINT_CALL(fs_root_again));
+			goto have_memory;
+		}
 		goto have_memory;
 	}
 
