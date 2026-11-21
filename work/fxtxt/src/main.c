@@ -2405,7 +2405,7 @@ static void draw_view(void)
 		if (crow >= view_top + rows()) view_top = crow - rows() + 1;
 	}
 
-	static char const *lab_read[6] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "", "" };
+	static char const *lab_read[6] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xCA\xE9\xC7\xA9", "" };
 	/* search result: 上一 / 下一 / 再查 ... 退出 / 帮助 */
 	static char const *lab_hit[6] = {
 		"\xC9\xCF\xD2\xBB", "\xCF\xC2\xD2\xBB", "\xD4\xD9\xB2\xE9",
