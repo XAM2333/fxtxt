@@ -761,6 +761,7 @@ static void fill_state(void)
 	if (root_dev[0])
 		strncpy(st.root, root_dev, sizeof st.root - 1);
 	st.big_font = 0;
+	st.hscroll = 0;	/* never carry a sideways scroll across sessions */
 	st.has_file = (mode == MODE_VIEW) && name_count > 0;
 	strncpy(st.dir, cur_dir, sizeof st.dir - 1);
 	st.dir[sizeof st.dir - 1] = 0;
