@@ -230,6 +230,7 @@ static int cell_adv(uint16_t cell)
 
 /* Chrome text may be Chinese: decode UTF-8 and draw with the small font. */
 static int ui_clip_x = 128;
+static int cfg_probe = -1;	/* line read from FXTXT.CFG, -1 = never */
 static int blink_on = 1;		/* caret phase, flips every 0.25 s */
 
 
@@ -1325,6 +1326,7 @@ static void apply_saved_pos(void)
 	if (cur_col > len) cur_col = len;
 	if (cur_col < 0) cur_col = 0;
 	hscroll = s.hscroll < 0 ? 0 : s.hscroll;
+	cfg_probe = s.cur_line;
 }
 
 static void fs_enter_dir(void)
@@ -2344,6 +2346,11 @@ static void draw_view(void)
 				snprintf(info, sizeof info, "%d/%d",
 				         chunk_rows + view_top + 1,
 				         total_rows > 0 ? total_rows : rows_total);
+		if (cfg_probe >= 0) {
+			size_t l = strlen(info);
+			if (l + 5 < sizeof info)
+				snprintf(info + l, sizeof info - l, " C%d", cfg_probe);
+		}
 			ui_info_right = 1;
 		}
 		ui_hints(edit_mode ? (cn_mode ? hint_edit_cn : hint_edit_en) : hint_view, info,
