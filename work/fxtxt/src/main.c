@@ -4025,8 +4025,15 @@ restart:
 		/* re-entered from the main menu: the buffers from the previous run
 		   are still allocated (the add-in image is kept), keep them, but
 		   start the listing at the root folder again */
-		if (root_dev[0])
-			gint_world_switch(GINT_CALL(fs_root_again));
+		/* keep the root listing we already have: re-listing is what made
+		   coming back from the menu feel slow */
+		if (root_dev[0] && (strcmp(cur_dir, root_dev) || name_count == 0)) {
+			cur_dir[0] = 0;
+			strncpy(cur_dir, root_dev, sizeof cur_dir - 1);
+			gint_world_switch(GINT_CALL(fs_list_dir));
+		}
+		list_sel = 0;
+		list_top = 0;
 		/* always come back to the list, never into the document that
 		   happened to be open when the menu key was pressed */
 		edit_mode = 0;
