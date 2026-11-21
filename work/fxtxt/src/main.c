@@ -757,6 +757,9 @@ typedef struct {
 	int check;
 } pos_file_t;
 
+static int pos_wrc = 99;	/* BFile_Open(ReadWrite) result */
+static int pos_crc = 99;	/* BFile_Create result */
+static int pos_len;		/* path length, 0 = never built */
 static unsigned char const POS_MAGIC[4] = { 'F', 'P', 'O', 'S' };
 
 /* Build \\fls0\<dir>\<NAME>.POS from cur_dir + names[list_sel]. */
@@ -804,8 +807,12 @@ static int pos_path(uint16_t *fc, int cap)
 		for (int i = 0; full[i] && m < cap - 1; i++)
 			fc[m++] = (unsigned char)full[i];
 		fc[m] = 0;
+		pos_len = m;
 		if (BFile_Open(fc, BFile_ReadOnly) >= 0)
 			return m;
+		/* a Path that cannot even be opened is still the path we must
+		   create, so return it instead of 0 */
+		return m;
 	}
 	return 0;
 }
@@ -845,6 +852,7 @@ static void pos_write(void)
 	/* rewrite in place first; a unit that refuses falls back to recreate with
 	   the same name, which keeps one file per document either way */
 	int fd = BFile_Open(fc, BFile_ReadWrite);
+	pos_wrc = fd;
 	if (fd >= 0) {
 		BFile_Seek(fd, 0);
 		BFile_Write(fd, &p, (int)sizeof p);
@@ -853,7 +861,8 @@ static void pos_write(void)
 	}
 	int sz = (int)sizeof p;
 	BFile_Remove(fc);
-	if (BFile_Create(fc, BFile_File, &sz) < 0)
+	pos_crc = BFile_Create(fc, BFile_File, &sz);
+	if (pos_crc < 0)
 		return;
 	fd = BFile_Open(fc, BFile_WriteOnly);
 	if (fd < 0)
@@ -2459,10 +2468,11 @@ static void draw_view(void)
 				snprintf(info, sizeof info, "%d/%d",
 				         chunk_rows + view_top + 1,
 				         total_rows > 0 ? total_rows : rows_total);
-		if (cfg_probe >= 0) {
+		{
 			size_t l = strlen(info);
-			if (l + 5 < sizeof info)
-				snprintf(info + l, sizeof info - l, " C%d", cfg_probe);
+			if (l + 14 < sizeof info)
+				snprintf(info + l, sizeof info - l,
+					 " P%d/%d/%d", pos_len, pos_wrc, pos_crc);
 		}
 			ui_info_right = 1;
 		}
