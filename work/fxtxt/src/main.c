@@ -347,7 +347,16 @@ static void ui_fkeys(void)
 		int x = i * 21;
 		drect(x, BOX_Y, x, 63, C_BLACK);          /* dividers to the bottom */
 	}
-	for (int i = 0; i < 6; i++) {
+	{
+		/* F6 is a solid ▶ : three columns, 5/3/1 pixels tall */
+		int cy = (BOX_Y + 63) / 2;
+		for (int c = 0; c < 3; c++) {
+			int half = 2 - c;
+			for (int r = -half; r <= half; r++)
+				px_on(115 + c, cy + r);
+		}
+	}
+	for (int i = 0; i < 5; i++) {
 		char const *s = box_lab[i];
 		if (!s || !s[0])
 			continue;
@@ -1909,7 +1918,7 @@ static void draw_view(void)
 	}
 
 	static char const *lab_read[6] = { "", "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA" };
-	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xB2\xE9\xD5\xD2", "\xCD\xCB\xB3\xF6", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
+	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xB4\xF3\xD0\xB4", "\xCD\xCB\xB3\xF6", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
 	{
 		static char const *r1[5] = { "", "", "", "", "\xB0\xEF\xD6\xFA" };
 		static char const *e1[5] = { "\xB3\xB7\xCF\xFA", "\xB4\xF3\xD0\xB4",
@@ -2820,10 +2829,7 @@ static void handle_view_key(key_event_t ev)
 		undo_apply();
 		return;
 	}
-	if (edit_mode && fbar_page && ev.key == KEY_F2) {
-		caps_on = !caps_on;
-		return;
-	}
+
 
 	if (edit_mode && ev.key == KEY_F5) {
 		if (ev.shift) {
@@ -2927,6 +2933,11 @@ static void handle_view_key(key_event_t ev)
 		}
 		return;
 	case KEY_F2:
+		/* page one: 大写锁定, page two: 查找 */
+		if (edit_mode && !fbar_page) {
+			caps_on = !caps_on;
+			return;
+		}
 		mode = MODE_SEARCH;
 		py_reset();
 		return;
