@@ -336,6 +336,7 @@ static void ui_hints(char const *hints, char const *info, int show_lock)
 }
 
 static char const *box_lab[6] = { 0, 0, 0, 0, 0, 0 };
+static int help_back;		/* mode to return to when help closes */
 static int fbar_page;	/* 0: page one, 1: page two (F6 flips) */
 
 /* Six cups along the bottom edge (F1..F6): no bottom edge, no gaps, and each
@@ -347,13 +348,13 @@ static void ui_fkeys(void)
 		int x = i * 21;
 		drect(x, BOX_Y, x, 63, C_BLACK);          /* dividers to the bottom */
 	}
-	{
-		/* F6 is a solid ▶ : three columns, 5/3/1 pixels tall */
+	if (edit_mode || mode == MODE_LIST) {
+		/* F6 flips the bar: a centred 5x7 solid triangle */
 		int cy = (BOX_Y + 63) / 2;
-		for (int c = 0; c < 3; c++) {
-			int half = 2 - c;
+		for (int c = 0; c < 5; c++) {
+			int half = (4 - c) * 7 / 10;
 			for (int r = -half; r <= half; r++)
-				px_on(115 + c, cy + r);
+				px_on(114 + c, cy + r);
 		}
 	}
 	for (int i = 0; i < 5; i++) {
@@ -2039,7 +2040,7 @@ static void draw_view(void)
 		if (crow >= view_top + rows()) view_top = crow - rows() + 1;
 	}
 
-	static char const *lab_read[6] = { "", "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA" };
+	static char const *lab_read[6] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA", "" };
 	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xCD\xCB\xB3\xF6", "\xB4\xF3\xD0\xB4", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
 	{
 		static char const *r1[5] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA" };
@@ -2048,8 +2049,8 @@ static void draw_view(void)
 		for (int i = 0; i < 5; i++)
 			box_lab[i] = edit_mode
 				? (fbar_page ? e1[i] : lab_edit[i])
-				: (fbar_page ? r1[i] : lab_read[i]);
-		box_lab[5] = "\xB7\xAD\xD2\xB3";
+				: lab_read[i];
+		box_lab[5] = edit_mode ? "\xB7\xAD\xD2\xB3" : "";
 	}
 
 	int caret_x = -1, caret_y = -1;
@@ -2252,10 +2253,10 @@ static void draw_search(void)
 	ui_title("\xCB\xD1\xCB\xF7");
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = 0;
-	box_lab[0] = "\xC9\xCF\xD2\xBB";		/* F1  上一条 */
+	box_lab[0] = "\xB2\xE9\xD5\xD2";		/* F1  查找 */
+	box_lab[1] = "\xC9\xCF\xD2\xBB";		/* F2  上一条 */
 	box_lab[2] = "\xCF\xC2\xD2\xBB";		/* F3  下一条 */
-	box_lab[3] = "\xB2\xE9\xD5\xD2";		/* F4  查找 */
-	box_lab[5] = "\xB0\xEF\xD6\xFA";		/* F6  帮助 */
+	box_lab[4] = "\xB0\xEF\xD6\xFA";		/* F5  帮助 */
 	int y = CONTENT_Y + 2;
 	draw_ui(2, y, "\xB2\xE9\xD5\xD2", 0);
 	int x = 30;
@@ -2295,21 +2296,26 @@ static void draw_search(void)
 static void handle_search_key(key_event_t ev)
 {
 	if (py_len == 0) {
-		if (ev.key == KEY_F1 || ev.key == KEY_F3) {
+		if (ev.key == KEY_F2 || ev.key == KEY_F3) {
 			if (search_n > 0) {
 				search_cur = (search_cur +
-				              (ev.key == KEY_F1 ? search_n - 1 : 1)) % search_n;
+				              (ev.key == KEY_F2 ? search_n - 1 : 1)) % search_n;
 				search_show();
 				mode = MODE_VIEW;
 			}
 			return;
 		}
-		if (ev.key == KEY_F4) {
+		if (ev.key == KEY_F1) {
 			build_search_cells();
 			if (search_len) {
 				run_search();
 				mode = MODE_VIEW;
 			}
+			return;
+		}
+		if (ev.key == KEY_F5 && ev.shift == 0) {
+			help_back = MODE_SEARCH;
+			mode = MODE_HELP;
 			return;
 		}
 	}
@@ -2951,7 +2957,8 @@ static void handle_view_key(key_event_t ev)
 		return;
 	}
 	if (ev.key == KEY_F6) {
-		fbar_page = fbar_page ? 0 : 1;
+		if (edit_mode)
+			fbar_page = fbar_page ? 0 : 1;
 		return;
 	}
 	if (edit_mode && fbar_page && ev.key == KEY_F1) {
@@ -3103,6 +3110,7 @@ static void handle_view_key(key_event_t ev)
 			return;
 		}
 		edit_mode = !edit_mode;
+		fbar_page = 0;		/* every page starts on F bar page one */
 		if (edit_mode) {
 			/* view_top counts display rows but cur_line counts
 			   logical lines: convert, otherwise paging N times
