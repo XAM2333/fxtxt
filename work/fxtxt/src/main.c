@@ -720,37 +720,55 @@ typedef struct {
 
 static save_state_t st;
 
+/* gint's stdio cannot create a file on the unit (fopen "wb" simply fails),
+   so the CFG is written through BFile instead.  One create + one write, no
+   read-back: the read-modify-write pattern is what reset the calculator. */
+static int state_fc(uint16_t *fc, int cap)
+{
+	static char const *const cand[2] = {
+		"\\\\fls0\\FXTXT.CFG",
+		"/fls0/FXTXT.CFG",
+	};
+	for (int k = 0; k < 2; k++) {
+		int n = 0;
+		for (int i = 0; cand[k][i] && n < cap - 1; i++)
+			fc[n++] = (unsigned char)cand[k][i];
+		fc[n] = 0;
+		if (BFile_Open(fc, BFile_ReadOnly) >= 0)
+			return n;
+	}
+	int n = 0;
+	for (int i = 0; cand[0][i] && n < cap - 1; i++)
+		fc[n++] = (unsigned char)cand[0][i];
+	fc[n] = 0;
+	return n;
+}
+
 static int read_state(save_state_t *out)
 {
-	char alt[32];
-	FILE *f = fopen(STATE_PATH, "rb");
-	if (!f) {
-		snprintf(alt, sizeof alt, "/fls0/FXTXT.CFG");
-		f = fopen(alt, "rb");
-	}
-	if (!f)
-		f = fopen("\\\\fls0\\FXTXT.CFG", "rb");
-	if (!f)
+	uint16_t fc[40];
+	state_fc(fc, 40);
+	int fd = BFile_Open(fc, BFile_ReadOnly);
+	if (fd < 0)
 		return 0;
-	int n = (int)fread(out, 1, sizeof *out, f);
-	fclose(f);
+	int n = BFile_Read(fd, out, (int)sizeof *out, 0);
+	BFile_Close(fd);
 	return n == (int)sizeof *out && !memcmp(out->magic, STATE_MAGIC, 4);
 }
 
 static void write_state(void)
 {
-	char alt[32];
-	FILE *f = fopen(STATE_PATH, "wb");
-	if (!f) {
-		snprintf(alt, sizeof alt, "/fls0/FXTXT.CFG");
-		f = fopen(alt, "wb");
-	}
-	if (!f)
-		f = fopen("\\\\fls0\\FXTXT.CFG", "wb");
-	if (!f)
+	uint16_t fc[40];
+	state_fc(fc, 40);
+	int sz = (int)sizeof st;
+	BFile_Remove(fc);
+	if (BFile_Create(fc, BFile_File, &sz) < 0)
 		return;
-	fwrite(&st, 1, sizeof st, f);
-	fclose(f);
+	int fd = BFile_Open(fc, BFile_WriteOnly);
+	if (fd < 0)
+		return;
+	BFile_Write(fd, &st, (int)sizeof st);
+	BFile_Close(fd);
 }
 
 static void fill_state(void)
