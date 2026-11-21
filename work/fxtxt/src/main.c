@@ -745,6 +745,123 @@ static int state_fc(uint16_t *fc, int cap)
 	return n;
 }
 
+
+/*=== per-document position file ===========================================*/
+/* One <NAME>.POS beside each document, so a document always maps to exactly
+   one file and the count never changes. 16 bytes, fixed size, so it can be
+   overwritten in place. */
+typedef struct {
+	unsigned char magic[4];
+	int line;
+	int view_top;
+	int check;
+} pos_file_t;
+
+static unsigned char const POS_MAGIC[4] = { 'F', 'P', 'O', 'S' };
+
+/* Build \\fls0\<dir>\<NAME>.POS from cur_dir + names[list_sel]. */
+static int pos_path(uint16_t *fc, int cap)
+{
+	static char const *const pre[2] = { "\\\\fls0", "/fls0" };
+	char name[72];
+	int k = 0;
+	for (int i = 0; names[list_sel][i] && k < (int)sizeof name - 5; i++)
+		name[k++] = names[list_sel][i];
+	/* replace the extension with .POS */
+	for (int i = k - 1; i >= 0; i--) {
+		if (name[i] == '.') { k = i; break; }
+		if (name[i] == '/' || name[i] == '\\') break;
+	}
+	name[k++] = '.';
+	name[k++] = 'P';
+	name[k++] = 'O';
+	name[k++] = 'S';
+	name[k] = 0;
+
+	for (int v = 0; v < 2; v++) {
+		char full[128];
+		int n = 0;
+		for (int i = 0; pre[v][i] && n < (int)sizeof full - 1; i++)
+			full[n++] = pre[v][i];
+		/* cur_dir already starts with the volume (/fls0); the prefix above
+		   adds it too, so skip it here or the path doubles up */
+		int cs = 0;
+		if ((cur_dir[0] == '/' || cur_dir[0] == '\\') && cur_dir[1] == 'f'
+		    && cur_dir[2] == 'l' && cur_dir[3] == 's' && cur_dir[4] == '0')
+			cs = 5;
+		for (int i = cs; cur_dir[i] && n < (int)sizeof full - 1; i++) {
+			char c = cur_dir[i];
+			if (c == '/') c = '\\';
+			full[n++] = c;
+		}
+		if (n && full[n - 1] != '\\' && n < (int)sizeof full - 1)
+			full[n++] = '\\';
+		for (int i = 0; name[i] && n < (int)sizeof full - 1; i++)
+			full[n++] = name[i];
+		full[n] = 0;
+
+		int m = 0;
+		for (int i = 0; full[i] && m < cap - 1; i++)
+			fc[m++] = (unsigned char)full[i];
+		fc[m] = 0;
+		if (BFile_Open(fc, BFile_ReadOnly) >= 0)
+			return m;
+	}
+	return 0;
+}
+
+static int pos_read(int *line, int *vtop)
+{
+	uint16_t fc[80];
+	if (!pos_path(fc, 80))
+		return 0;
+	int fd = BFile_Open(fc, BFile_ReadOnly);
+	if (fd < 0)
+		return 0;
+	pos_file_t p;
+	int n = BFile_Read(fd, &p, (int)sizeof p, 0);
+	BFile_Close(fd);
+	if (n != (int)sizeof p || memcmp(p.magic, POS_MAGIC, 4))
+		return 0;
+	if (p.check != ((int)POS_MAGIC[0] ^ (p.line * 31) ^ p.view_top))
+		return 0;
+	*line = p.line;
+	*vtop = p.view_top;
+	return 1;
+}
+
+static void pos_write(void)
+{
+	uint16_t fc[80];
+	if (!pos_path(fc, 80))
+		return;
+	pos_file_t p;
+	memcpy(p.magic, POS_MAGIC, 4);
+	p.line = offset_to_line(row_start(view_top));
+	if (p.line < 0) p.line = 0;
+	p.view_top = view_top;
+	p.check = (int)POS_MAGIC[0] ^ (p.line * 31) ^ p.view_top;
+
+	/* rewrite in place first; a unit that refuses falls back to recreate with
+	   the same name, which keeps one file per document either way */
+	int fd = BFile_Open(fc, BFile_ReadWrite);
+	if (fd >= 0) {
+		BFile_Seek(fd, 0);
+		BFile_Write(fd, &p, (int)sizeof p);
+		BFile_Close(fd);
+		return;
+	}
+	int sz = (int)sizeof p;
+	BFile_Remove(fc);
+	if (BFile_Create(fc, BFile_File, &sz) < 0)
+		return;
+	fd = BFile_Open(fc, BFile_WriteOnly);
+	if (fd < 0)
+		return;
+	BFile_Write(fd, &p, (int)sizeof p);
+	BFile_Close(fd);
+}
+
 static int read_state(save_state_t *out)
 {
 	uint16_t fc[40];
@@ -816,6 +933,7 @@ static void fs_save_state(void)
 	save_state_t prev;
 	int have_prev = read_state(&prev);
 	fill_state();
+	pos_write();
 	if (have_prev && !st.has_file) {
 		memcpy(st.name, prev.name, sizeof st.name);
 		st.has_file = prev.has_file;
@@ -1309,26 +1427,21 @@ static void fs_list_dir_depth(int depth)
 /* Restore the position remembered for the file we have just opened. */
 static void apply_saved_pos(void)
 {
-	save_state_t s;
-	if (!read_state(&s) || !s.has_file || !s.name[0])
-		return;
-	if (strcmp(s.name, names[list_sel]))
+	int line, vtop;
+	if (!pos_read(&line, &vtop))
 		return;
 	int tl = line_count();
-	view_top = s.view_top;
-	if (view_top > tl - 1) view_top = tl - 1;
-	if (view_top < 0) view_top = 0;
-	cur_line = s.cur_line;
+	if (tl <= 0)
+		return;
+	cur_line = line;
 	if (cur_line > tl - 1) cur_line = tl - 1;
 	if (cur_line < 0) cur_line = 0;
-	int len = line_len(line_start(cur_line));
-	cur_col = s.cur_col;
-	if (cur_col > len) cur_col = len;
-	if (cur_col < 0) cur_col = 0;
-	hscroll = s.hscroll < 0 ? 0 : s.hscroll;
-	cfg_probe = s.cur_line;
+	view_top = vtop;
+	if (view_top < 0) view_top = 0;
+	cur_col = 0;
+	hscroll = 0;
+	cfg_probe = cur_line;
 }
-
 static void fs_enter_dir(void)
 {
 	char next[64];
