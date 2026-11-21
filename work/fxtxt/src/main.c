@@ -2040,9 +2040,9 @@ static void draw_view(void)
 	}
 
 	static char const *lab_read[6] = { "", "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA" };
-	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xB4\xF3\xD0\xB4", "\xCD\xCB\xB3\xF6", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
+	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xCD\xCB\xB3\xF6", "\xB4\xF3\xD0\xB4", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
 	{
-		static char const *r1[5] = { "", "", "", "", "\xB0\xEF\xD6\xFA" };
+		static char const *r1[5] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA" };
 		static char const *e1[5] = { "\xB3\xB7\xCF\xFA", "\xB2\xE9\xD5\xD2",
 		                             "", "", "\xB0\xEF\xD6\xFA" };
 		for (int i = 0; i < 5; i++)
@@ -2943,6 +2943,11 @@ static void handle_view_key(key_event_t ev)
 		}
 	}
 
+	if (!edit_mode && ev.key == KEY_F1) {
+		mode = MODE_SEARCH;
+		py_reset();
+		return;
+	}
 	if (ev.key == KEY_F6) {
 		fbar_page = fbar_page ? 0 : 1;
 		return;
@@ -2953,7 +2958,12 @@ static void handle_view_key(key_event_t ev)
 	}
 
 
-	if (edit_mode && ev.key == KEY_F5) {
+	if (ev.key == KEY_F5 && (!edit_mode || ev.shift || fbar_page)) {
+		help_back = MODE_VIEW;
+		mode = MODE_HELP;
+		return;
+	}
+	if (edit_mode && ev.key == KEY_F5 && !fbar_page) {
 		if (ev.shift) {
 			/* SHIFT+F5 = 字母锁（与 SHIFT+ALPHA 等价），只显示徽标 */
 			alpha_lock = !alpha_lock;
@@ -3084,6 +3094,7 @@ static void handle_view_key(key_event_t ev)
 		}
 		fbar_page = fbar_page ? 0 : 1;
 		return;
+	case KEY_F2:
 	case KEY_F3:
 		if (edit_mode && dirty) {
 			confirm_kind = 1;
