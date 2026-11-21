@@ -85,6 +85,7 @@ static int ncell;
 static int chunk_base;		/* file offset of cells[0] */
 static int chunk_bytes;		/* bytes of the file held in rawbuf */
 static int chunk_more;		/* something follows this window */
+static int chunk_lines;		/* lines preceding this window */
 static unsigned char *rawbuf;
 
 static int edit_mode;
@@ -1720,6 +1721,7 @@ static int load_chunk(int base)
 
 static void fs_read_current(void)
 {
+	chunk_lines = 0;
 	load_chunk(0);
 }
 
@@ -2169,7 +2171,8 @@ static void draw_view(void)
 				         search_cur + 1, search_n);
 			else
 				snprintf(info, sizeof info, "%d/%d",
-				         view_top + 1, rows_total);
+				         chunk_lines + view_top + 1,
+				         chunk_lines + rows_total);
 			ui_info_right = 1;
 		}
 		ui_hints(edit_mode ? (cn_mode ? hint_edit_cn : hint_edit_en) : hint_view, info,
@@ -3143,6 +3146,9 @@ static void handle_view_key(key_event_t ev)
 			if (view_top > lim) {
 				view_top = lim;
 				if (chunk_more) {
+					for (int i = 0; i < ncell; i++)
+						if (cells[i] == CELL_NL)
+							chunk_lines++;
 					load_chunk(chunk_base + chunk_bytes);
 					view_top = 0;
 					hscroll = 0;
