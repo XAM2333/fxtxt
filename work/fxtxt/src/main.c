@@ -3063,6 +3063,8 @@ static void draw_keyboard(void)
 /*=== help =================================================================*/
 
 static int help_page;
+static int help_sel;
+static int book_page;
 static int help_back = MODE_LIST;	/* where to return after help */
 static char del_name[NAME_MAX_L + 1];	/* file waiting for confirmation */
 static int confirm_kind;		/* 0 = delete, 1 = discard edits */
@@ -3093,9 +3095,24 @@ static void draw_help(void)
 		"\x45\x58\x45\x20\xBB\xBB\xD0\xD0\x20\x20\x44\x45\x4C\x20\xC9\xBE\xD7\xD6",
 	};
 	static char const *titles[] = { "\xC1\xD0\xB1\xED\xD2\xB3", "\xD4\xC4\xB6\xC1\xD2\xB3", "\xB1\xE0\xBC\xAD\xD2\xB3" };
+	if (help_page == 3) {
+		int k = (pos_ready() && name_count > 0 && list_sel < name_count
+			 && !is_dir[list_sel]) ? pos_upsert(names[list_sel]) : -1;
+		int yy = CONTENT_Y;
+		for (int i = 0; i < 6; i++, yy += 9) {
+			int p = k >= 0 ? pos_tab[k].bm[i] : 0;
+			char line[24];
+			if (p > 0)
+				snprintf(line, sizeof line, "%d:%d", i + 1, p);
+			else
+				snprintf(line, sizeof line, "%d:-", i + 1);
+			draw_ui(6, yy, line, i == help_sel);
+		}
+		return;
+	}
 	char const **lines = help_page == 0 ? page1 : (help_page == 1 ? page2 : page3);
 	char head[32];
-	snprintf(head, sizeof head, "\xB0\xEF\xD6\xFA %d/3", help_page + 1);
+	snprintf(head, sizeof head, "\xB0\xEF\xD6\xFA %d/4", help_page + 1);
 	ui_title(head);
 
 	/* page name on the first content line, then four key lines */
@@ -4250,9 +4267,9 @@ have_memory:
 			handle_book_key(ev);
 } else if (mode == MODE_HELP) {
 			if (!ev_repeat && ev.key == KEY_LEFT)
-				help_page = (help_page + 2) % 3;
+				help_page = (help_page + 2) % 4;
 			else if (!ev_repeat && ev.key == KEY_RIGHT)
-				help_page = (help_page + 1) % 3;
+				help_page = (help_page + 1) % 4;
 			else if (ev.key == KEY_EXIT || ev.key == KEY_EXE || ev.key == KEY_F2)
 				mode = help_back;
 		} else {
