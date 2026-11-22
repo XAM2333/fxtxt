@@ -809,7 +809,7 @@ static int pos24_path(char const *name, uint16_t *fc, int cap)
 	/* cur_path looks like \\TXT\CCZD.txt: the volume name is missing, so it
 	   has to be put back by hand. cur_dir is "/TXT", also without the volume. */
 	if (cur_path[0] == '\\' && cur_path[1] == '\\')
-		snprintf(p, sizeof p, "\\\\fls0%s", cur_path + 2);
+		snprintf(p, sizeof p, "\\\\fls0\\%s", cur_path + 2);
 	else if (cur_path[0])
 		snprintf(p, sizeof p, "\\\\fls0\\%s", cur_path);
 	else
