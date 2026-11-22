@@ -2468,8 +2468,6 @@ static void rec_open_sel(void)
 
 static void draw_list(void)
 {
-	if (boot_mark)	/* probe: this process started from main() */
-		drect(120, 1, 127, 8, C_BLACK);
 	ui_no_cups = 0;
 	char head[24];
 	char const *folder = strrchr(cur_dir, '/');
@@ -4317,6 +4315,8 @@ static key_event_t next_event(void)
 			case MODE_BOOK: draw_book(); break;
 			default: draw_list(); break;
 			}
+			if (boot_mark)	/* probe: drawn last so nothing covers it */
+				drect(120, 1, 127, 8, C_BLACK);
 			dupdate();
 		}
 		volatile int timeout = 15;
