@@ -730,11 +730,10 @@ static save_state_t st;
    read-back: the read-modify-write pattern is what reset the calculator. */
 static int state_fc(uint16_t *fc, int cap)
 {
-	static char const *const cand[3] = {
+	static char const *const cand[2] = {
 		"\\\\fls0\\FXTXT\\CFG.BIN",
 		"/fls0/FXTXT/CFG.BIN",
-		"\\\\fls0\\FXTXT.CFG",	/* fallback: one file, no subfolder */
-	};
+	};	/* never \\fls0 itself: extra root files hide every add-in */
 	/* Never add entries straight to \\fls0: the main menu rebuilds its
 	   add-in list from that directory and extra files make it come up
 	   short. One subfolder of our own keeps the root exactly as delivered. */
@@ -748,8 +747,9 @@ static int state_fc(uint16_t *fc, int cap)
 		}
 		d[m] = 0;
 		BFile_Create(d, BFile_Type_Directory, NULL);
+		mkdir("\\\\fls0\\FXTXT", 0777);	/* second way, same folder */
 	}
-	for (int k = 0; k < 3; k++) {
+	for (int k = 0; k < 2; k++) {
 		int n = 0;
 		for (int i = 0; cand[k][i] && n < cap - 1; i++)
 			fc[n++] = (unsigned char)cand[k][i];
@@ -871,10 +871,9 @@ static int read_state(save_state_t *out)
 
 static void state_fc_at(uint16_t *fc, int cap, int k)
 {
-	static char const *const cand[3] = {
+	static char const *const cand[2] = {
 		"\\\\fls0\\FXTXT\\CFG.BIN",
 		"/fls0/FXTXT/CFG.BIN",
-		"\\\\fls0\\FXTXT.CFG",
 	};
 	int n = 0;
 	for (int i = 0; cand[k][i] && n < cap - 1; i++)
@@ -904,7 +903,7 @@ static void write_state(void)
 	}
 
 	/* try every location: opening the saved one, then creating each in turn */
-	for (int k = 0; k < 3; k++) {
+	for (int k = 0; k < 2; k++) {
 		uint16_t p[40];
 		state_fc_at(p, 40, k);
 		int fd = BFile_Open(p, BFile_ReadWrite);
