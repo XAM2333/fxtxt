@@ -4415,6 +4415,9 @@ restart:
 		/* always refresh from the card here: the retained frame is already on
 		   screen, so this costs no visible wait and picks up files that another
 		   application may have added meanwhile */
+		snprintf(cur_dir, sizeof cur_dir, "%s", root_dev[0] ? root_dev : "/");
+		list_sel = 0;
+		list_top = 0;
 		gint_world_switch(GINT_CALL(fs_list_dir));
 		if (list_sel >= name_count)
 			list_sel = name_count ? name_count - 1 : 0;
