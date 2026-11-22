@@ -925,8 +925,13 @@ static void pos_file_save(char const *name)
 
 /*=== remember the working folder ==========================================*/
 /* One 16-byte file: the folder path, so a menu re-entry comes back to it. */
+static char dir_written[16];	/* last folder actually stored */
+
 static void dir_save(void)
 {
+	if (!cur_dir[0] || !strcmp(dir_written, cur_dir))
+		return;		/* unchanged: do not touch the card again */
+	snprintf(dir_written, sizeof dir_written, "%s", cur_dir);
 	uint16_t fc[32];
 	static char const *const p = "\\\\fls0\\FXTXT.DIR";
 	int n = 0;
@@ -4445,9 +4450,11 @@ restart:
 		   are still allocated (the add-in image is kept), keep them, but
 		   start the listing at the root folder again */
 		/* stay in the folder that was open when the menu key was hit */
-		dir_load();	/* back to the folder of last time */
-		if (name_count == 0 && cur_dir[0])
-			gint_world_switch(GINT_CALL(fs_list_dir));
+		if (name_count == 0) {
+			dir_load();
+			if (cur_dir[0])
+				gint_world_switch(GINT_CALL(fs_list_dir));
+		}
 		list_sel = 0;
 		list_top = 0;
 		/* always come back to the list, never into the document that
