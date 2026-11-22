@@ -4569,6 +4569,23 @@ have_memory:
 			/* keep the buffers: the image survives a menu round trip, so the
 			   next entry can paint the list at once and refresh behind it */
 			gint_osmenu();
+			/* back from the OS menu: this call returns here, so a clean
+			   re-entry has to happen now rather than at start-up */
+			snprintf(cur_dir, sizeof cur_dir, "%s",
+			         root_dev[0] ? root_dev : "/");
+			list_sel = 0;
+			list_top = 0;
+			edit_mode = 0;
+			search_n = 0;
+			search_len = 0;
+			py_reset();
+			mode = MODE_LIST;
+			gint_world_switch(GINT_CALL(fs_list_dir));
+			dclear(C_WHITE);
+			draw_list();
+			dupdate();
+			continue;
+
 			gint_setrestart(1);
 			goto restart;
 		}
