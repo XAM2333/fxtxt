@@ -3315,6 +3315,7 @@ static void book_load(void)
 
 static void draw_book(void)
 {
+	ui_clip_x = 128;	/* draw_ui clips at this: without it the page is blank */
 	ui_no_cups = 0;
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = NULL;
