@@ -766,8 +766,6 @@ typedef struct {
 
 static pos_rec_t *pos_tab;	/* heap: static RAM is only 6 KiB */
 static int pos_n;
-static uint16_t pos_fc[96];	/* .POS path of the document now open */
-static int pos_fc_ok;
 
 static int pos_ready(void)
 {
@@ -793,116 +791,6 @@ static int pos_upsert(char const *name)
 }
 
 /* called while the document is still open */
-
-/*=== per-document position, DL22P style ===================================*/
-/* One 24-byte file beside the document: <name>.POS.  Created once, then only
-   ever overwritten in place with exactly 24 bytes. */
-typedef struct {
-	short line;		/* 0-based line, the unit only gave 16 bytes */
-	short vtop;		/* first display row of the page */
-	short bm[6];		/* bookmarks, absolute row + 1, 0 = empty */
-} pos24_t;	/* 16 bytes exactly: 2 + 2 + 12 */
-
-static int pos24_path(char const *name, uint16_t *fc, int cap)
-{
-	char p[192];
-	/* cur_path is the document that is really open; cur_dir + list_sel
-	   stops being right once a second file has been opened */
-	if (cur_path[0] && strchr(cur_path, '/'))
-		snprintf(p, sizeof p, "%s", cur_path);
-	else
-		snprintf(p, sizeof p, "%s/%s", cur_dir, name);
-	int n = (int)strlen(p);
-	if (n <= 0 || n >= (int)sizeof p)
-		return 0;
-	char *dot = strrchr(p, '.');
-	if (dot && !strchr(dot, '/'))
-		strcpy(dot, ".POS");
-	else if (n + 5 < (int)sizeof p)
-		strcat(p, ".POS");
-	int m = 0;
-	fc[m++] = '\\';
-	fc[m++] = '\\';
-	for (int i = 0; p[i] && m < cap - 1; i++) {
-		if (p[i] == '/' && i == 0)
-			continue;		/* drop the leading slash */
-		fc[m++] = (uint16_t)(p[i] == '/' ? '\\' : (unsigned char)p[i]);
-	}
-	fc[m] = 0;
-	return m;
-}
-
-static void pos_file_load(char const *name)
-{
-	uint16_t fc[96];
-	if (pos_fc_ok)
-		for (int i = 0; i < 96; i++) fc[i] = pos_fc[i];
-	else if (!pos24_path(name, fc, 96))
-		return;
-	if (!pos_ready())
-		return;
-	int fd = BFile_Open(fc, BFile_ReadOnly);
-	if (fd < 0)
-		return;
-	pos24_t v;
-	int n = BFile_Read(fd, &v, (int)sizeof v, 0);
-	BFile_Close(fd);
-	if (n != (int)sizeof v || v.line < 0 || v.line > 1000000 || v.vtop < 0)
-		return;
-	int k = pos_upsert(name);
-	if (k < 0)
-		return;
-	pos_tab[k].line = v.line;
-	pos_tab[k].vtop = v.vtop;
-	for (int i = 0; i < 6; i++)
-		pos_tab[k].bm[i] = v.bm[i];
-}
-
-static void pos_file_save(char const *name)
-{
-	uint16_t fc[96];
-	if (pos_fc_ok)
-		for (int i = 0; i < 96; i++) fc[i] = pos_fc[i];
-	else if (!pos24_path(name, fc, 96))
-		return;
-	if (!pos_ready())
-		return;
-	int k = -1;
-	for (int i = 0; i < pos_n; i++)
-		if (!strcmp(pos_tab[i].name, name)) { k = i; break; }
-	if (k < 0)
-		return;
-	pos24_t v;
-	v.line = (short)(pos_tab[k].line > 32000 ? 32000 : pos_tab[k].line);
-	v.vtop = (short)(pos_tab[k].vtop > 32000 ? 32000 : pos_tab[k].vtop);
-	for (int i = 0; i < 6; i++)
-		v.bm[i] = (short)pos_tab[k].bm[i];
-	int fd = BFile_Open(fc, BFile_ReadWrite);
-	if (fd >= 0) {
-		int cap = BFile_Size(fd);
-		if (cap >= (int)sizeof v) {
-			BFile_Seek(fd, 0);
-			int w = BFile_Write(fd, &v, (int)sizeof v);
-			BFile_Close(fd);
-			if (w == (int)sizeof v)
-				return;
-		} else {
-			BFile_Close(fd);
-		}
-	}
-	int sz = (int)sizeof v;
-	if (BFile_Create(fc, BFile_File, &sz) < 0)
-		return;
-	fd = BFile_Open(fc, BFile_WriteOnly);
-	if (fd < 0)
-		return;
-	int n = sz & ~1;
-	if (n > (int)sizeof v) n = (int)sizeof v;
-	if (n > 0)
-		BFile_Write(fd, &v, n);
-	BFile_Close(fd);
-}
-
 static void pos_store(void)
 {
 	if (!pos_ready()) return;
@@ -912,19 +800,11 @@ static void pos_store(void)
 	pos_tab[k].line = offset_to_line(row_start(view_top));
 	if (pos_tab[k].line < 0) pos_tab[k].line = 0;
 	pos_tab[k].vtop = view_top;
-	pos_file_save(names[list_sel]);
 }
 
 static int pos_lookup(char const *name, int *line, int *vtop)
 {
 	if (!pos_ready()) return 0;
-	for (int i = pos_n - 1; i >= 0; i--)
-		if (!strcmp(pos_tab[i].name, name)) {
-			*line = pos_tab[i].line;
-			*vtop = pos_tab[i].vtop;
-			return 1;
-		}
-	pos_file_load(name);	/* first look after it */
 	for (int i = pos_n - 1; i >= 0; i--)
 		if (!strcmp(pos_tab[i].name, name)) {
 			*line = pos_tab[i].line;
@@ -1594,14 +1474,8 @@ static void fs_list_dir_depth(int depth)
 /* Restore the position remembered for the file we have just opened. */
 static void apply_saved_pos(void)
 {
-	/* the path must be taken now: cur_path does not survive until EXIT */
-	pos_fc_ok = 0;
-	if (cur_path[0] && strchr(cur_path, '/') &&
-	    name_count > 0 && list_sel >= 0 && list_sel < name_count)
-		pos_fc_ok = pos24_path(names[list_sel], pos_fc, 96);
 	if (name_count <= 0 || list_sel < 0 || list_sel >= name_count)
 		return;
-	pos_file_load(names[list_sel]);
 	int line, vtop;
 	if (!pos_lookup(names[list_sel], &line, &vtop))
 		return;
