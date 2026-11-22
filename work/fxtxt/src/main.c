@@ -4581,6 +4581,7 @@ have_memory:
 			py_reset();
 			mode = MODE_LIST;
 			gint_world_switch(GINT_CALL(fs_list_dir));
+			sleep_ms(30);
 			dclear(C_WHITE);
 			draw_list();
 			dupdate();
