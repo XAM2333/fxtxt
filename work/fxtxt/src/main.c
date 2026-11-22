@@ -4284,6 +4284,25 @@ static key_event_t next_event(void)
 	static int rep_key, rep_n;
 	static int blink_n;
 
+	/* show something immediately: on a menu re-entry the panel still held
+	   the previous frame and nothing was painted until a key arrived */
+	uint32_t *vram = gint_vram;
+	gint_vram = gint_vram;      /* keep the symbol referenced */
+	dclear(C_WHITE);
+	switch (mode) {
+	case MODE_VIEW:
+		draw_view();
+		break;
+	case MODE_BOOK:
+		draw_book();
+		break;
+	default:
+		draw_list();
+		break;
+	}
+	dupdate();
+	(void)vram;
+
 	for (;;) {
 		volatile int timeout = 15;
 		key_event_t e = getkey_opt(0, &timeout);
@@ -4383,6 +4402,13 @@ restart:
 	int reentry = app_ready || root_dev[0];
 
 	if (cells) {
+		/* the buffers survived, so the list can be shown right now: doing it
+		   before the card touches removes the visible wait */
+		if (name_count > 0) {
+			dclear(C_WHITE);
+			draw_list();
+			dupdate();
+		}
 		/* re-entered from the main menu: the buffers from the previous run
 		   are still allocated (the add-in image is kept), keep them, but
 		   start the listing at the root folder again */
