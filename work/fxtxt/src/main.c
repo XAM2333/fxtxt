@@ -3313,8 +3313,9 @@ static void book_load(void)
 	int k = pos_upsert(names[list_sel]);
 	for (int i = 0; i < 6; i++) {
 		int v = pos_tab[k].bm[i];
-		/* records written before this field existed hold garbage */
-		book_v[i] = (v > 0 && v < 200000) ? v : 0;
+		/* page + 1 on disk: 0 and 1 both mean "never stored", and old
+		   records land far outside the plausible range */
+		book_v[i] = (v >= 2 && v < 200001) ? v - 1 : 0;
 	}
 }
 
@@ -3365,7 +3366,7 @@ static void handle_book_key(key_event_t ev)
 		book_del_ask = 0;
 	} else if (ev.key == KEY_F1) {
 		if (k >= 0) {
-			pos_tab[k].bm[book_sel] = book_page;
+			pos_tab[k].bm[book_sel] = book_page + 1;
 			book_load();
 		}
 		book_del_ask = 0;
@@ -4235,11 +4236,16 @@ have_memory:
 	/* The volume name survives a menu exit (the image is kept), so only probe
 	   when we really do not know it yet. The listing is always rebuilt because
 	   the buffers are released when we hand control back to the OS. */
-	if (!root_dev[0])
+	if (!root_dev[0]) {
+		/* the config already knows the volume and the folder: trust it first
+		   so a menu re-entry does not walk the file system again */
+		int restored = fs_restore();
 		gint_world_switch(GINT_CALL(fs_probe_root));
-	else
+		if (restored)
+			normalise_cur_dir();
+	} else
 		normalise_cur_dir();
-	if (!cur_dir[0] || !strcmp(cur_dir, "/"))
+	if (!cur_dir[0])
 		snprintf(cur_dir, sizeof cur_dir, "%s", root_dev);
 
 	if (name_count == 0)
