@@ -771,8 +771,13 @@ static int pos_fc_ok;
 
 static int pos_ready(void)
 {
-	if (!pos_tab)
+	if (!pos_tab) {
 		pos_tab = malloc(sizeof(pos_rec_t) * POS_CAP);
+		if (pos_tab) {
+			memset(pos_tab, 0, sizeof(pos_rec_t) * POS_CAP);
+			pos_n = 0;
+		}
+	}
 	return pos_tab != NULL;
 }
 
@@ -798,22 +803,33 @@ static int pos_upsert(char const *name)
 /* One 24-byte file beside the document: <name>.POS.  Created once, then only
    ever overwritten in place with exactly 24 bytes. */
 typedef struct {
-	short line;		/* 0-based line, the unit only gave 16 bytes */
+	short line;		/* 0-based line */
 	short vtop;		/* first display row of the page */
 	short bm[6];		/* bookmarks, absolute row + 1, 0 = empty */
-} pos24_t;	/* 16 bytes exactly: 2 + 2 + 12 */
+	short rsv[4];		/* padding: keeps the record at 24 bytes */
+} pos24_t;	/* 24 bytes: 2 + 2 + 12 + 8 */
 
 static int pos24_path(char const *name, uint16_t *fc, int cap)
 {
 	char p[192];
 	/* cur_path looks like \\TXT\CCZD.txt: the volume name is missing, so it
 	   has to be put back by hand. cur_dir is "/TXT", also without the volume. */
-	if (cur_path[0] == '\\' && cur_path[1] == '\\')
-		snprintf(p, sizeof p, "\\\\fls0\\%s", cur_path + 2);
-	else if (cur_path[0])
-		snprintf(p, sizeof p, "\\\\fls0\\%s", cur_path);
-	else
-		snprintf(p, sizeof p, "\\\\fls0%s\\%s", cur_dir, name);
+	{
+		char const *q = cur_path;
+		while (*q == '\\' || *q == '/')
+			q++;			/* drop whatever separator style was used */
+		if (*q)
+			snprintf(p, sizeof p, "\\\\fls0\\%s", q);
+		else {
+			char const *d = cur_dir;
+			while (*d == '\\' || *d == '/')
+				d++;
+			if (*d)
+				snprintf(p, sizeof p, "\\\\fls0\\%s\\%s", d, name);
+			else
+				snprintf(p, sizeof p, "\\\\fls0\\%s", name);
+		}
+	}
 	int n = (int)strlen(p);
 	if (n <= 0 || n >= (int)sizeof p)
 		return 0;
@@ -846,9 +862,10 @@ static void pos_file_load(char const *name)
 	if (fd < 0)
 		return;
 	pos24_t v;
+	memset(&v, 0, sizeof v);
 	int n = BFile_Read(fd, &v, (int)sizeof v, 0);
 	BFile_Close(fd);
-	if (n != (int)sizeof v || v.line < 0 || v.line > 1000000 || v.vtop < 0)
+	if (n < 8 || v.line < 0 || v.line > 32000 || v.vtop < 0 || v.vtop > 32000)
 		return;
 	int k = pos_upsert(name);
 	if (k < 0)
@@ -874,6 +891,7 @@ static void pos_file_save(char const *name)
 	if (k < 0)
 		return;
 	pos24_t v;
+	memset(&v, 0, sizeof v);
 	v.line = (short)(pos_tab[k].line > 32000 ? 32000 : pos_tab[k].line);
 	v.vtop = (short)(pos_tab[k].vtop > 32000 ? 32000 : pos_tab[k].vtop);
 	for (int i = 0; i < 6; i++)
