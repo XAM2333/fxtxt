@@ -804,7 +804,13 @@ typedef struct {
 static int pos24_path(char const *name, uint16_t *fc, int cap)
 {
 	char p[192];
-	int n = snprintf(p, sizeof p, "%s/%s", cur_dir, name);
+	/* cur_path is the document that is really open; cur_dir + list_sel
+	   stops being right once a second file has been opened */
+	if (cur_path[0] && strchr(cur_path, '/'))
+		snprintf(p, sizeof p, "%s", cur_path);
+	else
+		snprintf(p, sizeof p, "%s/%s", cur_dir, name);
+	int n = (int)strlen(p);
 	if (n <= 0 || n >= (int)sizeof p)
 		return 0;
 	char *dot = strrchr(p, '.');
