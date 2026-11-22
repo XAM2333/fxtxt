@@ -352,6 +352,7 @@ static char const *box_lab[6] = { 0, 0, 0, 0, 0, 0 };
 static int help_back;		/* mode to return to when help closes */
 static int fbar_page;
 static int book_sel;
+static int book_v[6];	/* snapshot, drawn every frame */
 static int book_page;	/* 0: page one, 1: page two (F6 flips) */
 
 /* Six cups along the bottom edge (F1..F6): no bottom edge, no gaps, and each
@@ -3300,6 +3301,18 @@ static void open_keyboard(int target, int page)
 	mode = MODE_KEYB;
 }
 
+static void book_load(void)
+{
+	for (int i = 0; i < 6; i++)
+		book_v[i] = 0;
+	if (!pos_ready() || name_count <= 0 || list_sel >= name_count
+	    || is_dir[list_sel])
+		return;
+	int k = pos_upsert(names[list_sel]);
+	for (int i = 0; i < 6; i++)
+		book_v[i] = pos_tab[k].bm[i];
+}
+
 static void draw_book(void)
 {
 	ui_no_cups = 0;
@@ -3308,11 +3321,9 @@ static void draw_book(void)
 	box_lab[0] = "\xB1\xA3\xB4\xE6";
 	box_lab[5] = "\xB0\xEF\xD6\xFA";
 	ui_title("\xCA\xE9\xC7\xA9");
-	int k = (pos_ready() && name_count > 0 && list_sel < name_count
-		 && !is_dir[list_sel]) ? pos_upsert(names[list_sel]) : -1;
 	int y = CONTENT_Y;
 	for (int i = 0; i < 6; i++, y += 9) {
-		int p = k >= 0 ? pos_tab[k].bm[i] : 0;
+		int p = book_v[i];
 		char line[24];
 		if (p > 0) snprintf(line, sizeof line, "%d:%d", i + 1, p);
 		else snprintf(line, sizeof line, "%d:-", i + 1);
@@ -3328,9 +3339,13 @@ static void handle_book_key(key_event_t ev)
 	else if ((ev.key == KEY_F1 || ev.key == KEY_DEL || ev.key == KEY_EXE)
 		 && name_count > 0 && list_sel < name_count && pos_ready()) {
 		int k = pos_upsert(names[list_sel]);
-		if (ev.key == KEY_F1) { pos_tab[k].bm[book_sel] = book_page; }
-		else if (ev.key == KEY_DEL) { pos_tab[k].bm[book_sel] = 0; }
-		else {
+		if (ev.key == KEY_F1) {
+			pos_tab[k].bm[book_sel] = book_page;
+			book_load();
+		} else if (ev.key == KEY_DEL) {
+			pos_tab[k].bm[book_sel] = 0;
+			book_load();
+		} else {
 			int p = pos_tab[k].bm[book_sel];
 			if (p > 0) {
 				int rel = p - 1 - chunk_rows;
@@ -4224,6 +4239,7 @@ have_memory:
 		status_sticky = 0;
 		if (mode == MODE_VIEW && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
 			book_sel = 0;
+			book_load();
 			book_page = chunk_rows + view_top + 1;
 			mode = MODE_BOOK;
 			continue;
