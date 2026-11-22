@@ -4,7 +4,7 @@
 #define FONT_FIRST 0x20
 #define FONT_LAST  0x7E
 #define FONT_COUNT (FONT_LAST - FONT_FIRST + 1)
-#define FONT_GLYPHS 8178
+#define FONT_GLYPHS 5170
 #define GB_MAP_COUNT 7445
 
 extern const unsigned char font_ascii8[FONT_COUNT][8];
