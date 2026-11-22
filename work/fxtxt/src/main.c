@@ -766,6 +766,8 @@ typedef struct {
 
 static pos_rec_t *pos_tab;	/* heap: static RAM is only 6 KiB */
 static int pos_n;
+static uint16_t pos_fc[96];	/* .POS path of the document now open */
+static int pos_fc_ok;
 
 static int pos_ready(void)
 {
@@ -833,7 +835,11 @@ static int pos24_path(char const *name, uint16_t *fc, int cap)
 static void pos_file_load(char const *name)
 {
 	uint16_t fc[96];
-	if (!pos24_path(name, fc, 96) || !pos_ready())
+	if (pos_fc_ok)
+		for (int i = 0; i < 96; i++) fc[i] = pos_fc[i];
+	else if (!pos24_path(name, fc, 96))
+		return;
+	if (!pos_ready())
 		return;
 	int fd = BFile_Open(fc, BFile_ReadOnly);
 	if (fd < 0)
@@ -855,7 +861,11 @@ static void pos_file_load(char const *name)
 static void pos_file_save(char const *name)
 {
 	uint16_t fc[96];
-	if (!pos24_path(name, fc, 96) || !pos_ready())
+	if (pos_fc_ok)
+		for (int i = 0; i < 96; i++) fc[i] = pos_fc[i];
+	else if (!pos24_path(name, fc, 96))
+		return;
+	if (!pos_ready())
 		return;
 	int k = -1;
 	for (int i = 0; i < pos_n; i++)
@@ -1584,6 +1594,11 @@ static void fs_list_dir_depth(int depth)
 /* Restore the position remembered for the file we have just opened. */
 static void apply_saved_pos(void)
 {
+	/* the path must be taken now: cur_path does not survive until EXIT */
+	pos_fc_ok = 0;
+	if (cur_path[0] && strchr(cur_path, '/') &&
+	    name_count > 0 && list_sel >= 0 && list_sel < name_count)
+		pos_fc_ok = pos24_path(names[list_sel], pos_fc, 96);
 	if (name_count <= 0 || list_sel < 0 || list_sel >= name_count)
 		return;
 	pos_file_load(names[list_sel]);
