@@ -731,24 +731,12 @@ static save_state_t st;
 static int state_fc(uint16_t *fc, int cap)
 {
 	static char const *const cand[2] = {
-		"\\\\fls0\\FXTXT\\CFG.BIN",
-		"/fls0/FXTXT/CFG.BIN",
-	};	/* never \\fls0 itself: extra root files hide every add-in */
+		"\\\\fls0\\FXTXT.CFG",
+		"/fls0/FXTXT.CFG",
+	};	/* a folder cannot be created here, so keep one plain file */
 	/* Never add entries straight to \\fls0: the main menu rebuilds its
 	   add-in list from that directory and extra files make it come up
 	   short. One subfolder of our own keeps the root exactly as delivered. */
-	{
-		uint16_t d[40];
-		int m = 0;
-		for (int i = 0; cand[0][i] && m < 39; i++) {
-			if (cand[0][i] == '\\' && cand[0][i + 1] == 'C')
-				break;
-			d[m++] = (unsigned char)cand[0][i];
-		}
-		d[m] = 0;
-		BFile_Create(d, BFile_Type_Directory, NULL);
-		mkdir("\\\\fls0\\FXTXT", 0777);	/* second way, same folder */
-	}
 	for (int k = 0; k < 2; k++) {
 		int n = 0;
 		for (int i = 0; cand[k][i] && n < cap - 1; i++)
@@ -872,8 +860,8 @@ static int read_state(save_state_t *out)
 static void state_fc_at(uint16_t *fc, int cap, int k)
 {
 	static char const *const cand[2] = {
-		"\\\\fls0\\FXTXT\\CFG.BIN",
-		"/fls0/FXTXT/CFG.BIN",
+		"\\\\fls0\\FXTXT.CFG",
+		"/fls0/FXTXT.CFG",
 	};
 	int n = 0;
 	for (int i = 0; cand[k][i] && n < cap - 1; i++)
@@ -4269,8 +4257,14 @@ have_memory:
 		gint_world_switch(GINT_CALL(fs_probe_root));
 		fs_restore();
 		normalise_cur_dir();
-	} else
+	} else {
 		normalise_cur_dir();
+		/* the static image survives a menu round trip, but the position
+		   table only exists after a read: without this the history and
+		   the bookmarks look empty after every re-entry */
+		fs_restore();
+		normalise_cur_dir();
+	}
 	if (!cur_dir[0])
 		snprintf(cur_dir, sizeof cur_dir, "%s", root_dev);
 
