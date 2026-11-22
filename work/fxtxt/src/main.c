@@ -4303,7 +4303,19 @@ static key_event_t next_event(void)
 	dupdate();
 	(void)vram;
 
+	int need_paint = 1;	/* paint once from inside the loop, after the OS has
+				   handed the display back */
 	for (;;) {
+		if (need_paint) {
+			need_paint = 0;
+			dclear(C_WHITE);
+			switch (mode) {
+			case MODE_VIEW: draw_view(); break;
+			case MODE_BOOK: draw_book(); break;
+			default: draw_list(); break;
+			}
+			dupdate();
+		}
 		volatile int timeout = 15;
 		key_event_t e = getkey_opt(0, &timeout);
 		key_event_t none = { 0 };
