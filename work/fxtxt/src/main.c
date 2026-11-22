@@ -816,6 +816,9 @@ static int pos_lookup(char const *name, int *line, int *vtop)
 
 static int read_state(save_state_t *out)
 {
+	/* no file is ever read: see write_state() */
+	if (1)
+		return 0;
 	uint16_t fc[40];
 	state_fc(fc, 40);
 	int fd = BFile_Open(fc, BFile_ReadOnly);
@@ -871,6 +874,12 @@ static void state_fc_at(uint16_t *fc, int cap, int k)
 
 static void write_state(void)
 {
+	/* Writing anything into \\fls0 -- even a single 1 KiB file -- makes
+	   the main menu drop the add-in list on this unit. Keep the saved
+	   position and the bookmarks in RAM instead: gint keeps the image
+	   resident, so a menu round trip still returns to the same page. */
+	if (1)
+		return;
 	uint16_t fc[40];
 	state_fc(fc, 40);
 
