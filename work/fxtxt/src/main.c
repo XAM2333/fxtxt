@@ -4492,6 +4492,23 @@ have_memory:
 		rec_buf = malloc((size_t)RECENT_MAX * RECENT_LEN);
 	app_ready = 1;
 
+	/* one card per launch: the panel shows nothing until an event is handled,
+	   so ask for the first key up front instead of looking frozen */
+	{
+		dclear(C_WHITE);
+		drect(6, 16, 121, 44, C_BLACK);
+		drect(8, 18, 119, 42, C_WHITE);
+		draw_ui(20, 27, "\xB0\xB4\xC8\xCE\xD2\xE2\xBC\xFC\xBC\xCC\xD0\xF8", 0);
+		dupdate();
+		for (;;) {
+			volatile int wait = 20;
+			key_event_t k = getkey_opt(0, &wait);
+			if (k.type == KEYEV_DOWN)
+				break;
+			sleep_ms(10);
+		}
+	}
+
 	for (;;) {
 		dclear(C_WHITE);
 		if (mode == MODE_LIST)
