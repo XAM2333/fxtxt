@@ -4284,41 +4284,9 @@ static key_event_t next_event(void)
 	static int rep_key, rep_n;
 	static int blink_n;
 
-	/* show something immediately: on a menu re-entry the panel still held
-	   the previous frame and nothing was painted until a key arrived */
-	uint32_t *vram = gint_vram;
-	gint_vram = gint_vram;      /* keep the symbol referenced */
-	dclear(C_WHITE);
-	switch (mode) {
-	case MODE_VIEW:
-		draw_view();
-		break;
-	case MODE_BOOK:
-		draw_book();
-		break;
-	default:
-		draw_list();
-		break;
-	}
-	dupdate();
-	(void)vram;
-
-	int need_paint = 1;	/* paint once from inside the loop, after the OS has
-				   handed the display back */
 	for (;;) {
 		volatile int timeout = 15;
 		key_event_t e = getkey_opt(0, &timeout);
-
-		if (need_paint) {
-			need_paint = 0;
-			dclear(C_WHITE);
-			switch (mode) {
-			case MODE_VIEW: draw_view(); break;
-			case MODE_BOOK: draw_book(); break;
-			default: draw_list(); break;
-			}
-			dupdate();
-		}
 		key_event_t none = { 0 };
 
 		if (e.type == KEYEV_NONE) {
@@ -4415,29 +4383,14 @@ restart:
 	int reentry = app_ready || root_dev[0];
 
 	if (cells) {
-		/* the buffers survived, so the list can be shown right now: doing it
-		   before the card touches removes the visible wait */
-		if (name_count > 0) {
-			dclear(C_WHITE);
-			draw_list();
-			dupdate();
-		}
 		/* re-entered from the main menu: the buffers from the previous run
 		   are still allocated (the add-in image is kept), keep them, but
 		   start the listing at the root folder again */
-		/* always refresh from the card here: the retained frame is already on
-		   screen, so this costs no visible wait and picks up files that another
-		   application may have added meanwhile */
-		snprintf(cur_dir, sizeof cur_dir, "%s", root_dev[0] ? root_dev : "/");
+		/* stay in the folder that was open when the menu key was hit */
+		if (name_count == 0 && cur_dir[0])
+			gint_world_switch(GINT_CALL(fs_list_dir));
 		list_sel = 0;
 		list_top = 0;
-		gint_world_switch(GINT_CALL(fs_list_dir));
-		if (list_sel >= name_count)
-			list_sel = name_count ? name_count - 1 : 0;
-		list_top = list_sel > 4 ? list_sel - 4 : 0;
-		dclear(C_WHITE);
-		draw_list();
-		dupdate();
 		/* always come back to the list, never into the document that
 		   happened to be open when the menu key was pressed */
 		edit_mode = 0;
@@ -4579,27 +4532,8 @@ have_memory:
 			gint_world_switch(GINT_CALL(fs_save_state));
 			/* the OS heap outlives this instance: hand the buffers
 			   back before parking in the menu, then rebuild */
-			/* keep the buffers: the image survives a menu round trip, so the
-			   next entry can paint the list at once and refresh behind it */
+			app_release();
 			gint_osmenu();
-			/* back from the OS menu: this call returns here, so a clean
-			   re-entry has to happen now rather than at start-up */
-			snprintf(cur_dir, sizeof cur_dir, "%s",
-			         root_dev[0] ? root_dev : "/");
-			list_sel = 0;
-			list_top = 0;
-			edit_mode = 0;
-			search_n = 0;
-			search_len = 0;
-			py_reset();
-			mode = MODE_LIST;
-			gint_world_switch(GINT_CALL(fs_list_dir));
-			sleep_ms(30);
-			dclear(C_WHITE);
-			draw_list();
-			dupdate();
-			continue;
-
 			gint_setrestart(1);
 			goto restart;
 		}
