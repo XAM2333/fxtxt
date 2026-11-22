@@ -3930,9 +3930,6 @@ static void handle_confirm_key(key_event_t ev)
 			book_load();
 		}
 		mode = MODE_BOOK;
-		dclear(C_WHITE);
-		draw_book();
-		dupdate();
 		return;
 	}
 	if (confirm_kind == 1) {
@@ -4245,7 +4242,8 @@ have_memory:
 	if (!cur_dir[0] || !strcmp(cur_dir, "/"))
 		snprintf(cur_dir, sizeof cur_dir, "%s", root_dev);
 
-	gint_world_switch(GINT_CALL(fs_list_dir));
+	if (name_count == 0)
+		gint_world_switch(GINT_CALL(fs_list_dir));
 
 	/* Starting up or coming back from the menu both land on the root folder:
 	   the document that was open is gone, and its position is remembered
