@@ -922,6 +922,62 @@ static void pos_file_save(char const *name)
 	BFile_Close(fd);
 }
 
+
+/*=== remember the working folder ==========================================*/
+/* One 16-byte file: the folder path, so a menu re-entry comes back to it. */
+static void dir_save(void)
+{
+	uint16_t fc[32];
+	static char const *const p = "\\\\fls0\\FXTXT.DIR";
+	int n = 0;
+	for (int i = 0; p[i] && n < 31; i++)
+		fc[n++] = (unsigned char)p[i];
+	fc[n] = 0;
+	char buf[16];
+	memset(buf, 0, sizeof buf);
+	int l = (int)strlen(cur_dir);
+	if (l > 15) l = 15;
+	memcpy(buf, cur_dir, l);
+	int fd = BFile_Open(fc, BFile_ReadWrite);
+	if (fd >= 0) {
+		if (BFile_Size(fd) >= 16) {
+			BFile_Seek(fd, 0);
+			int w = BFile_Write(fd, buf, 16);
+			BFile_Close(fd);
+			if (w == 16) return;
+		} else {
+			BFile_Close(fd);
+		}
+	}
+	int sz = 16;
+	if (BFile_Create(fc, BFile_File, &sz) < 0 || sz < 16)
+		return;
+	fd = BFile_Open(fc, BFile_WriteOnly);
+	if (fd < 0) return;
+	BFile_Write(fd, buf, 16);
+	BFile_Close(fd);
+}
+
+static int dir_load(void)
+{
+	uint16_t fc[32];
+	static char const *const p = "\\\\fls0\\FXTXT.DIR";
+	int n = 0;
+	for (int i = 0; p[i] && n < 31; i++)
+		fc[n++] = (unsigned char)p[i];
+	fc[n] = 0;
+	int fd = BFile_Open(fc, BFile_ReadOnly);
+	if (fd < 0) return 0;
+	char buf[16];
+	memset(buf, 0, sizeof buf);
+	int r = BFile_Read(fd, buf, 16, 0);
+	BFile_Close(fd);
+	if (r < 2 || buf[0] != '/') return 0;
+	buf[15] = 0;
+	snprintf(cur_dir, sizeof cur_dir, "%s", buf);
+	return 1;
+}
+
 static void pos_store(void)
 {
 	if (!pos_ready()) return;
@@ -932,6 +988,7 @@ static void pos_store(void)
 	if (pos_tab[k].line < 0) pos_tab[k].line = 0;
 	pos_tab[k].vtop = view_top;
 	pos_file_save(names[list_sel]);
+	dir_save();
 }
 
 static int pos_lookup(char const *name, int *line, int *vtop)
@@ -4439,6 +4496,7 @@ have_memory:
 		fs_restore();
 		normalise_cur_dir();
 	}
+	dir_load();	/* back to the folder of last time */
 	if (!cur_dir[0])
 		snprintf(cur_dir, sizeof cur_dir, "%s", root_dev);
 
