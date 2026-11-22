@@ -4412,11 +4412,16 @@ restart:
 		/* re-entered from the main menu: the buffers from the previous run
 		   are still allocated (the add-in image is kept), keep them, but
 		   start the listing at the root folder again */
-		/* stay in the folder that was open when the menu key was hit */
-		if (name_count == 0 && cur_dir[0])
-			gint_world_switch(GINT_CALL(fs_list_dir));
-		list_sel = 0;
-		list_top = 0;
+		/* always refresh from the card here: the retained frame is already on
+		   screen, so this costs no visible wait and picks up files that another
+		   application may have added meanwhile */
+		gint_world_switch(GINT_CALL(fs_list_dir));
+		if (list_sel >= name_count)
+			list_sel = name_count ? name_count - 1 : 0;
+		list_top = list_sel > 4 ? list_sel - 4 : 0;
+		dclear(C_WHITE);
+		draw_list();
+		dupdate();
 		/* always come back to the list, never into the document that
 		   happened to be open when the menu key was pressed */
 		edit_mode = 0;
