@@ -3356,6 +3356,14 @@ static void book_load(void)
 static void draw_book(void)
 {
 	ui_clip_x = 128;	/* draw_ui clips at this: without it the page is blank */
+	{
+		/* probe: what the path builder actually gets to see */
+		char b[48];
+		snprintf(b, sizeof b, "cp:%s", cur_path);
+		draw_ui(2, 33, b, 0);
+		snprintf(b, sizeof b, "dir:%s", cur_dir);
+		draw_ui(2, 44, b, 0);
+	}
 	ui_no_cups = 0;
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = NULL;
