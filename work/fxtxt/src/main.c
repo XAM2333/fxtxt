@@ -796,10 +796,10 @@ static int pos_upsert(char const *name)
 /* One 24-byte file beside the document: <name>.POS.  Created once, then only
    ever overwritten in place with exactly 24 bytes. */
 typedef struct {
-	int line;		/* 0-based line */
-	int vtop;		/* first display row of the page */
+	short line;		/* 0-based line, the unit only gave 16 bytes */
+	short vtop;		/* first display row of the page */
 	short bm[6];		/* bookmarks, absolute row + 1, 0 = empty */
-} pos24_t;
+} pos24_t;	/* 16 bytes exactly: 2 + 2 + 12 */
 
 static int pos24_path(char const *name, uint16_t *fc, int cap)
 {
@@ -857,8 +857,8 @@ static void pos_file_save(char const *name)
 	if (k < 0)
 		return;
 	pos24_t v;
-	v.line = pos_tab[k].line;
-	v.vtop = pos_tab[k].vtop;
+	v.line = (short)(pos_tab[k].line > 32000 ? 32000 : pos_tab[k].line);
+	v.vtop = (short)(pos_tab[k].vtop > 32000 ? 32000 : pos_tab[k].vtop);
 	for (int i = 0; i < 6; i++)
 		v.bm[i] = (short)pos_tab[k].bm[i];
 	int fd = BFile_Open(fc, BFile_ReadWrite);
