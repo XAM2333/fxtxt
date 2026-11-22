@@ -904,9 +904,13 @@ static void write_state(void)
 				return;
 			}
 		}
-		int sz = 1024;
-		BFile_Remove(p);
-		if (BFile_Create(p, BFile_File, &sz) >= 0) {
+		/* create the file once, then only ever overwrite it in place:
+		   repeatedly removing and recreating entries in \fls0 is what
+		   made the main menu lose the add-in list */
+		if (BFile_Open(p, BFile_ReadOnly) < 0) {
+			int sz = 1024;
+			if (BFile_Create(p, BFile_File, &sz) < 0)
+				continue;
 			fd = BFile_Open(p, BFile_WriteOnly);
 			if (fd >= 0) {
 				int w = BFile_Write(fd, blob, 1024);
