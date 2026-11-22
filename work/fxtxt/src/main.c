@@ -352,6 +352,7 @@ static char const *box_lab[6] = { 0, 0, 0, 0, 0, 0 };
 static int help_back;		/* mode to return to when help closes */
 static int fbar_page;
 static int book_sel;
+static int book_dbg;
 static int book_v[6];	/* snapshot, drawn every frame */
 static int book_page;	/* 0: page one, 1: page two (F6 flips) */
 
@@ -4241,8 +4242,13 @@ have_memory:
 		if (mode == MODE_VIEW && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
 			book_sel = 0;
 			book_load();
+			book_dbg++;
 			book_page = chunk_rows + view_top + 1;
 			mode = MODE_BOOK;
+			/* draw right now: the loop does not repaint for this key */
+			dclear(C_WHITE);
+			draw_book();
+			dupdate();
 			continue;
 		}
 
