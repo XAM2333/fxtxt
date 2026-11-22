@@ -893,9 +893,12 @@ static void write_state(void)
 	int fd = BFile_Open(fc, BFile_ReadWrite);
 	if (fd >= 0) {
 		BFile_Seek(fd, 0);
-		BFile_Write(fd, blob, 1024);
+		int w = BFile_Write(fd, blob, 1024);
 		BFile_Close(fd);
-		return;
+		if (w == 1024) {
+			free(blob);	/* this used to leak a KiB on every save */
+			return;
+		}
 	}
 	int sz = 1024;
 	BFile_Remove(fc);
