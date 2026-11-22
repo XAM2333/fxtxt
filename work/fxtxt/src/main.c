@@ -4563,7 +4563,8 @@ have_memory:
 			gint_world_switch(GINT_CALL(fs_save_state));
 			/* the OS heap outlives this instance: hand the buffers
 			   back before parking in the menu, then rebuild */
-			app_release();
+			/* keep the buffers: the image survives a menu round trip, so the
+			   next entry can paint the list at once and refresh behind it */
 			gint_osmenu();
 			gint_setrestart(1);
 			goto restart;
