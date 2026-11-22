@@ -1356,14 +1356,22 @@ static void fs_probe_root(void)
 	cur_dir[sizeof cur_dir - 1] = 0;
 }
 
+/* Folders carry no extension here, documents always do, so the expensive
+   opendir probe is only needed for names without a dot.  This turns a
+   listing of forty files from forty opendir calls into one. */
 static int entry_is_dir(char const *name)
 {
 	char path[96];
 	DIR *d;
+
+	if (strchr(name, '.'))
+		return 0;
 	snprintf(path, sizeof path, "%s/%s", cur_dir, name);
 	d = opendir(path);
-	if (d) { closedir(d); return 1; }
-	return 0;
+	if (!d)
+		return 0;	/* one probe only, no retry */
+	closedir(d);
+	return 1;
 }
 
 static void sort_entries(void)
@@ -1597,7 +1605,8 @@ static void fs_list_dir_depth(int depth)
 						dup = 1;
 				if (dup)
 					continue;
-				int dir = (e->d_type == DT_DIR) || entry_is_dir(n);
+				int dir = (e->d_type == DT_DIR) ||
+					(e->d_type == DT_REG ? 0 : entry_is_dir(n));
 				if (!dir && !name_is_txt(n))
 					continue;
 				add_entry(n, dir, 0);
