@@ -765,9 +765,9 @@ static int state_fc(uint16_t *fc, int cap)
 }
 
 /*=== per-document history =================================================*/
-/* Lives inside FXTXT.CFG.  Nothing else is ever created: creating files in
-   \fls0 is what made the add-in list vanish.  Records are variable length and
-   the capacity is a byte budget, not a fixed slot count. */
+/* Lives inside FXTXT.CFG.  Creating files in \fls0 is what made the add-in
+   list vanish, so the preferred location is a folder of our own; the root
+   copy exists only as a fallback when that folder cannot be created. */
 #define POS_CAP 12
 typedef struct {
 	char name[32];
@@ -869,6 +869,19 @@ static int read_state(save_state_t *out)
 	return 1;
 }
 
+static void state_fc_at(uint16_t *fc, int cap, int k)
+{
+	static char const *const cand[3] = {
+		"\\\\fls0\\FXTXT\\CFG.BIN",
+		"/fls0/FXTXT/CFG.BIN",
+		"\\\\fls0\\FXTXT.CFG",
+	};
+	int n = 0;
+	for (int i = 0; cand[k][i] && n < cap - 1; i++)
+		fc[n++] = (unsigned char)cand[k][i];
+	fc[n] = 0;
+}
+
 static void write_state(void)
 {
 	uint16_t fc[40];
@@ -890,23 +903,32 @@ static void write_state(void)
 		off += (int)sizeof(pos_rec_t);
 	}
 
-	int fd = BFile_Open(fc, BFile_ReadWrite);
-	if (fd >= 0) {
-		BFile_Seek(fd, 0);
-		int w = BFile_Write(fd, blob, 1024);
-		BFile_Close(fd);
-		if (w == 1024) {
-			free(blob);	/* this used to leak a KiB on every save */
-			return;
-		}
-	}
-	int sz = 1024;
-	BFile_Remove(fc);
-	if (BFile_Create(fc, BFile_File, &sz) >= 0) {
-		fd = BFile_Open(fc, BFile_WriteOnly);
+	/* try every location: opening the saved one, then creating each in turn */
+	for (int k = 0; k < 3; k++) {
+		uint16_t p[40];
+		state_fc_at(p, 40, k);
+		int fd = BFile_Open(p, BFile_ReadWrite);
 		if (fd >= 0) {
-			BFile_Write(fd, blob, 1024);
+			BFile_Seek(fd, 0);
+			int w = BFile_Write(fd, blob, 1024);
 			BFile_Close(fd);
+			if (w == 1024) {
+				free(blob);
+				return;
+			}
+		}
+		int sz = 1024;
+		BFile_Remove(p);
+		if (BFile_Create(p, BFile_File, &sz) >= 0) {
+			fd = BFile_Open(p, BFile_WriteOnly);
+			if (fd >= 0) {
+				int w = BFile_Write(fd, blob, 1024);
+				BFile_Close(fd);
+				if (w == 1024) {
+					free(blob);
+					return;
+				}
+			}
 		}
 	}
 	free(blob);
