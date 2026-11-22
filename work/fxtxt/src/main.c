@@ -3561,10 +3561,6 @@ static void draw_book(void)
 	{
 		/* probe: what the path builder actually gets to see */
 		char b[48];
-		snprintf(b, sizeof b, "cp:%s", cur_path);
-		draw_ui(2, 33, b, 0);
-		snprintf(b, sizeof b, "dir:%s", cur_dir);
-		draw_ui(2, 44, b, 0);
 	}
 	ui_no_cups = 0;
 	for (int i = 0; i < 6; i++)
@@ -4297,6 +4293,7 @@ static void handle_list_key(key_event_t ev)
 		if (strcmp(cur_dir, root_dev)) {
 			list_sel = list_top = 0;
 			gint_world_switch(GINT_CALL(fs_leave_dir));
+			dir_save();
 		}
 		return;
 	case KEY_EXE:
@@ -4304,12 +4301,14 @@ static void handle_list_key(key_event_t ev)
 		if (!strcmp(names[list_sel], "..")) {
 			list_sel = list_top = 0;
 			gint_world_switch(GINT_CALL(fs_leave_dir));
+			dir_save();
 			return;
 		}
 		if (is_dir[list_sel]) {
 			/* fs_enter_dir() reads names[list_sel]: reset afterwards */
 			gint_world_switch(GINT_CALL(fs_enter_dir));
 			list_sel = list_top = 0;
+			dir_save();	/* remember this folder right away */
 			return;
 		}
 		build_paths();
