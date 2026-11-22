@@ -730,9 +730,10 @@ static save_state_t st;
    read-back: the read-modify-write pattern is what reset the calculator. */
 static int state_fc(uint16_t *fc, int cap)
 {
-	static char const *const cand[2] = {
+	static char const *const cand[3] = {
 		"\\\\fls0\\FXTXT\\CFG.BIN",
 		"/fls0/FXTXT/CFG.BIN",
+		"\\\\fls0\\FXTXT.CFG",	/* fallback: one file, no subfolder */
 	};
 	/* Never add entries straight to \\fls0: the main menu rebuilds its
 	   add-in list from that directory and extra files make it come up
@@ -748,7 +749,7 @@ static int state_fc(uint16_t *fc, int cap)
 		d[m] = 0;
 		BFile_Create(d, BFile_Type_Directory, NULL);
 	}
-	for (int k = 0; k < 2; k++) {
+	for (int k = 0; k < 3; k++) {
 		int n = 0;
 		for (int i = 0; cand[k][i] && n < cap - 1; i++)
 			fc[n++] = (unsigned char)cand[k][i];
