@@ -230,6 +230,7 @@ static int cell_adv(uint16_t cell)
 
 /* Chrome text may be Chinese: decode UTF-8 and draw with the small font. */
 static int ui_clip_x = 128;
+static int boot_mark;	/* 1 = main() ran from the start (probe) */
 static int blink_on = 1;		/* caret phase, flips every 0.25 s */
 
 
@@ -2467,6 +2468,8 @@ static void rec_open_sel(void)
 
 static void draw_list(void)
 {
+	if (boot_mark)	/* probe: this process started from main() */
+		drect(120, 1, 127, 8, C_BLACK);
 	ui_no_cups = 0;
 	char head[24];
 	char const *folder = strrchr(cur_dir, '/');
@@ -4407,6 +4410,7 @@ static key_event_t next_event(void)
 
 int main(void)
 {
+	boot_mark = 1;
 	gint_setrestart(1);
 
 restart:
