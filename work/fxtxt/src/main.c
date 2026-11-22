@@ -896,10 +896,16 @@ static void write_state(void)
 		state_fc_at(p, 40, k);
 		int fd = BFile_Open(p, BFile_ReadWrite);
 		if (fd >= 0) {
-			BFile_Seek(fd, 0);
-			int w = BFile_Write(fd, blob, 1024);
+			int cap = BFile_Size(fd);	/* never write past the allocation */
+			if (cap > 1024) cap = 1024;
+			cap &= ~1;
+			int w = -1;
+			if (cap > 0) {
+				BFile_Seek(fd, 0);
+				w = BFile_Write(fd, blob, cap);
+			}
 			BFile_Close(fd);
-			if (w == 1024) {
+			if (w == cap && cap > 0) {
 				free(blob);
 				return;
 			}
@@ -913,9 +919,11 @@ static void write_state(void)
 				continue;
 			fd = BFile_Open(p, BFile_WriteOnly);
 			if (fd >= 0) {
-				int w = BFile_Write(fd, blob, 1024);
+				int n = sz & ~1;	/* the size the file actually got */
+				if (n > 1024) n = 1024;
+				int w = (n > 0) ? BFile_Write(fd, blob, n) : -1;
 				BFile_Close(fd);
-				if (w == 1024) {
+				if (w == n && n > 0) {
 					free(blob);
 					return;
 				}
