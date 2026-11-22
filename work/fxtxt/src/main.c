@@ -230,7 +230,6 @@ static int cell_adv(uint16_t cell)
 
 /* Chrome text may be Chinese: decode UTF-8 and draw with the small font. */
 static int ui_clip_x = 128;
-static int boot_mark;	/* 1 = main() ran from the start (probe) */
 static int blink_on = 1;		/* caret phase, flips every 0.25 s */
 
 
@@ -4315,8 +4314,6 @@ static key_event_t next_event(void)
 			case MODE_BOOK: draw_book(); break;
 			default: draw_list(); break;
 			}
-			if (boot_mark)	/* probe: drawn last so nothing covers it */
-				drect(120, 1, 127, 8, C_BLACK);
 			dupdate();
 		}
 		volatile int timeout = 15;
@@ -4410,7 +4407,6 @@ static key_event_t next_event(void)
 
 int main(void)
 {
-	boot_mark = 1;
 	gint_setrestart(1);
 
 restart:
