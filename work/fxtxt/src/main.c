@@ -3337,6 +3337,7 @@ static void draw_book(void)
 	}
 	if (book_del_ask)
 		draw_ui(6, CONTENT_Y + 40, "\xC8\xB7\xC8\xCF\xC9\xBE\xB3\xFD?", 0);
+	ui_status("");		/* the six F boxes */
 }
 
 static void handle_book_key(key_event_t ev)
@@ -3349,11 +3350,17 @@ static void handle_book_key(key_event_t ev)
 		mode = MODE_VIEW;
 		return;
 	}
-	if (ev.key == KEY_LEFT || ev.key == KEY_UP) {
+	if (ev.key == KEY_LEFT) {
 		if (book_sel > 0) book_sel--;
 		book_del_ask = 0;
-	} else if (ev.key == KEY_RIGHT || ev.key == KEY_DOWN) {
+	} else if (ev.key == KEY_RIGHT) {
 		if (book_sel < 5) book_sel++;
+		book_del_ask = 0;
+	} else if (ev.key == KEY_UP) {
+		if (book_sel >= 2) book_sel -= 2;
+		book_del_ask = 0;
+	} else if (ev.key == KEY_DOWN) {
+		if (book_sel <= 3) book_sel += 2;
 		book_del_ask = 0;
 	} else if (ev.key == KEY_F1) {
 		if (k >= 0) {
