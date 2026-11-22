@@ -4237,12 +4237,13 @@ have_memory:
 	   when we really do not know it yet. The listing is always rebuilt because
 	   the buffers are released when we hand control back to the OS. */
 	if (!root_dev[0]) {
-		/* the config already knows the volume and the folder: trust it first
-		   so a menu re-entry does not walk the file system again */
-		int restored = fs_restore();
+		/* fs_probe_root() resets cur_dir to the volume root, so the saved
+		   folder has to be put back *after* it. Both the folder and the
+		   per-document position are keyed by cur_dir: losing the folder
+		   makes the history look empty. */
 		gint_world_switch(GINT_CALL(fs_probe_root));
-		if (restored)
-			normalise_cur_dir();
+		fs_restore();
+		normalise_cur_dir();
 	} else
 		normalise_cur_dir();
 	if (!cur_dir[0])
