@@ -4284,6 +4284,18 @@ static key_event_t next_event(void)
 	static int rep_key, rep_n;
 	static int blink_n;
 
+	/* the OS drops the first frames after a reload: repeat the paint a few
+	   times over ~200 ms so one of them sticks without a key press */
+	for (int k = 0; k < 6; k++) {
+		dclear(C_WHITE);
+		switch (mode) {
+		case MODE_VIEW: draw_view(); break;
+		case MODE_BOOK: draw_book(); break;
+		default: draw_list(); break;
+		}
+		dupdate();
+		sleep_ms(35);
+	}
 	for (;;) {
 		volatile int timeout = 15;
 		key_event_t e = getkey_opt(0, &timeout);
