@@ -278,7 +278,7 @@ static void draw_small(int x, int y, char const *s, int invert)
 	}
 }
 
-#define SEARCH_MAX_HITS 512
+#define SEARCH_MAX_HITS 256
 static int search_hits[SEARCH_MAX_HITS];
 static int search_n;			/* matches stored */
 static int search_cur;			/* index of the match on screen */
@@ -352,8 +352,8 @@ static char const *box_lab[6] = { 0, 0, 0, 0, 0, 0 };
 static int help_back;		/* mode to return to when help closes */
 static int fbar_page;
 static int book_sel;
-static int book_dbg;
-static int book_v[6];	/* snapshot, drawn every frame */
+static int book_v[6];
+static int book_del_ask;	/* snapshot, drawn every frame */
 static int book_page;	/* 0: page one, 1: page two (F6 flips) */
 
 /* Six cups along the bottom edge (F1..F6): no bottom edge, no gaps, and each
@@ -3310,8 +3310,11 @@ static void book_load(void)
 	    || is_dir[list_sel])
 		return;
 	int k = pos_upsert(names[list_sel]);
-	for (int i = 0; i < 6; i++)
-		book_v[i] = pos_tab[k].bm[i];
+	for (int i = 0; i < 6; i++) {
+		int v = pos_tab[k].bm[i];
+		/* records written before this field existed hold garbage */
+		book_v[i] = (v > 0 && v < 200000) ? v : 0;
+	}
 }
 
 static void draw_book(void)
@@ -3320,45 +3323,71 @@ static void draw_book(void)
 	ui_no_cups = 0;
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = NULL;
-	box_lab[0] = "\xB1\xA3\xB4\xE6";
-	box_lab[5] = "\xB0\xEF\xD6\xFA";
+	box_lab[0] = "\xB4\xE6";
+	box_lab[1] = "\xB6\xC1\xC8\xA1";
+	box_lab[5] = "\xC9\xBE\xB3\xFD";
 	ui_title("\xCA\xE9\xC7\xA9");
-	int y = CONTENT_Y;
-	for (int i = 0; i < 6; i++, y += 9) {
+	for (int i = 0; i < 6; i++) {
+		int col = i % 2, row = i / 2;
 		int p = book_v[i];
 		char line[24];
 		if (p > 0) snprintf(line, sizeof line, "%d:%d", i + 1, p);
 		else snprintf(line, sizeof line, "%d:-", i + 1);
-		draw_ui(6, y, line, i == book_sel);
+		draw_ui(col ? 68 : 6, CONTENT_Y + row * 12, line, i == book_sel);
 	}
+	if (book_del_ask)
+		draw_ui(6, CONTENT_Y + 40, "\xC8\xB7\xC8\xCF\xC9\xBE\xB3\xFD?", 0);
 }
 
 static void handle_book_key(key_event_t ev)
 {
-	if (ev.key == KEY_UP && book_sel > 0) book_sel--;
-	else if (ev.key == KEY_DOWN && book_sel < 5) book_sel++;
-	else if (ev.key == KEY_EXIT) mode = MODE_VIEW;
-	else if ((ev.key == KEY_F1 || ev.key == KEY_DEL || ev.key == KEY_EXE)
-		 && name_count > 0 && list_sel < name_count && pos_ready()) {
-		int k = pos_upsert(names[list_sel]);
-		if (ev.key == KEY_F1) {
+	int k = (pos_ready() && name_count > 0 && list_sel < name_count
+		 && !is_dir[list_sel]) ? pos_upsert(names[list_sel]) : -1;
+
+	if (ev.key == KEY_EXIT) {
+		book_del_ask = 0;
+		mode = MODE_VIEW;
+		return;
+	}
+	if (ev.key == KEY_LEFT || ev.key == KEY_UP) {
+		if (book_sel > 0) book_sel--;
+		book_del_ask = 0;
+	} else if (ev.key == KEY_RIGHT || ev.key == KEY_DOWN) {
+		if (book_sel < 5) book_sel++;
+		book_del_ask = 0;
+	} else if (ev.key == KEY_F1) {
+		if (k >= 0) {
 			pos_tab[k].bm[book_sel] = book_page;
 			book_load();
-		} else if (ev.key == KEY_DEL) {
-			pos_tab[k].bm[book_sel] = 0;
-			book_load();
+		}
+		book_del_ask = 0;
+	} else if (ev.key == KEY_F2) {
+		int p = book_v[book_sel];
+		if (p > 0) {
+			int rel = p - 1 - chunk_rows;
+			if (rel < 0) rel = 0;
+			int lim = row_count() - rows();
+			if (rel > lim) rel = lim > 0 ? lim : 0;
+			view_top = rel;
+			mode = MODE_VIEW;
+			return;
+		}
+		book_del_ask = 0;
+	} else if (ev.key == KEY_F6) {
+		if (!book_del_ask) {
+			book_del_ask = 1;
 		} else {
-			int p = pos_tab[k].bm[book_sel];
-			if (p > 0) {
-				int rel = p - 1 - chunk_rows;
-				if (rel < 0) rel = 0;
-				int lim = row_count() - rows();
-				if (rel > lim) rel = lim > 0 ? lim : 0;
-				view_top = rel;
-				mode = MODE_VIEW;
+			if (k >= 0) {
+				pos_tab[k].bm[book_sel] = 0;
+				book_load();
 			}
+			book_del_ask = 0;
 		}
 	}
+	/* the loop only repaints on its own events, so paint here */
+	dclear(C_WHITE);
+	draw_book();
+	dupdate();
 }
 
 static void handle_view_key(key_event_t ev)
@@ -4242,7 +4271,6 @@ have_memory:
 		if (mode == MODE_VIEW && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
 			book_sel = 0;
 			book_load();
-			book_dbg++;
 			book_page = chunk_rows + view_top + 1;
 			mode = MODE_BOOK;
 			/* draw right now: the loop does not repaint for this key */
