@@ -353,7 +353,8 @@ static int help_back;		/* mode to return to when help closes */
 static int fbar_page;
 static int book_sel;
 static int book_v[6];
-static int book_del_ask;	/* snapshot, drawn every frame */
+static int book_del_ask;
+static int book_ask_sel;	/* snapshot, drawn every frame */
 static int book_page;	/* 0: page one, 1: page two (F6 flips) */
 
 /* Six cups along the bottom edge (F1..F6): no bottom edge, no gaps, and each
@@ -3381,15 +3382,10 @@ static void handle_book_key(key_event_t ev)
 		}
 		book_del_ask = 0;
 	} else if (ev.key == KEY_F6) {
-		if (!book_del_ask) {
-			book_del_ask = 1;
-		} else {
-			if (k >= 0) {
-				pos_tab[k].bm[book_sel] = 0;
-				book_load();
-			}
-			book_del_ask = 0;
-		}
+		book_ask_sel = book_sel;
+		confirm_kind = 2;
+		mode = MODE_CONFIRM;
+		return;
 	}
 	/* the loop only repaints on its own events, so paint here */
 	dclear(C_WHITE);
@@ -3898,6 +3894,16 @@ static void draw_confirm(void)
 	ui_no_cups = 1;
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = 0;
+	if (confirm_kind == 2) {
+		ui_title("\xC9\xBE\xB3\xFD\xCA\xE9\xC7\xA9");	/* 删除书签 */
+		char tmp[24];
+		snprintf(tmp, sizeof tmp, "%d", book_ask_sel + 1);
+		draw_ui(2, CONTENT_Y + 4, "\xC8\xB7\xB6\xA8\xC9\xBE\xB3\xFD?", 0);
+		draw_ui(2, CONTENT_Y + 16, tmp, 0);
+		ui_hints("EXE\xC9\xBE\xB3\xFD  EXIT\xC8\xA1\xCF\xFB", "", 0);
+		dupdate();
+		return;
+	}
 	if (confirm_kind == 1) {
 		ui_title("\xCE\xB4\xB1\xA3\xB4\xE6");
 		draw_ui(2, CONTENT_Y + 2, "\xB7\xC5\xC6\xFA\xD0\xDE\xB8\xC4\xA3\xBF", 0);
@@ -3916,6 +3922,19 @@ static void draw_confirm(void)
 
 static void handle_confirm_key(key_event_t ev)
 {
+	if (confirm_kind == 2) {
+		if (ev.key == KEY_EXE && pos_ready() && name_count > 0
+		    && list_sel < name_count && !is_dir[list_sel]) {
+			int k = pos_upsert(names[list_sel]);
+			pos_tab[k].bm[book_ask_sel] = 0;
+			book_load();
+		}
+		mode = MODE_BOOK;
+		dclear(C_WHITE);
+		draw_book();
+		dupdate();
+		return;
+	}
 	if (confirm_kind == 1) {
 		if (ev.key == KEY_EXE) {
 			dirty = 0;
