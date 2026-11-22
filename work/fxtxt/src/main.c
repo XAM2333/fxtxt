@@ -4386,22 +4386,6 @@ static key_event_t next_event(void)
 
 /*=== main =================================================================*/
 
-static void splash_card(void)
-{
-	dclear(C_WHITE);
-	drect(6, 16, 121, 44, C_BLACK);
-	drect(8, 18, 119, 42, C_WHITE);
-	draw_ui(20, 27, "\xB0\xB4\xC8\xCE\xD2\xE2\xBC\xFC\xBC\xCC\xD0\xF8", 0);
-	dupdate();
-	for (;;) {
-		volatile int wait = 20;
-		key_event_t k = getkey_opt(0, &wait);
-		if (k.type == KEYEV_DOWN)
-			break;
-		sleep_ms(10);
-	}
-}
-
 int main(void)
 {
 	gint_setrestart(1);
@@ -4508,8 +4492,6 @@ have_memory:
 		rec_buf = malloc((size_t)RECENT_MAX * RECENT_LEN);
 	app_ready = 1;
 
-	splash_card();
-
 	for (;;) {
 		dclear(C_WHITE);
 		if (mode == MODE_LIST)
@@ -4564,7 +4546,6 @@ have_memory:
 			   back before parking in the menu, then rebuild */
 			app_release();
 			gint_osmenu();
-			splash_card();	/* back from the menu: same card */
 			gint_setrestart(1);
 			goto restart;
 		}
