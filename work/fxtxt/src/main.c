@@ -4109,6 +4109,16 @@ static void handle_kb_key(key_event_t ev)
 	}
 }
 
+/* drop the .POS sidecar of a document that is going away */
+static void pos24_remove(char const *name)
+{
+	uint16_t fc[96];
+
+	if (!pos24_path(name, fc, 96))	/* pos24_path already builds the FC path */
+		return;
+	BFile_Remove(fc);
+}
+
 static void fs_delete_selected(void);
 
 static void fs_delete_selected(void)
@@ -4120,6 +4130,7 @@ static void fs_delete_selected(void)
 	memcpy(fc, names_fc[list_sel], sizeof fc);
 	if (BFile_Remove(fc) != 0)
 		fs_delete_path(name);
+		pos24_remove(name);	/* sidecar goes with it */
 	fs_list_dir();
 	if (list_sel >= name_count)
 		list_sel = name_count ? name_count - 1 : 0;
@@ -4435,6 +4446,7 @@ restart:
 		   are still allocated (the add-in image is kept), keep them, but
 		   start the listing at the root folder again */
 		/* stay in the folder that was open when the menu key was hit */
+		dir_load();	/* back to the folder of last time */
 		if (name_count == 0 && cur_dir[0])
 			gint_world_switch(GINT_CALL(fs_list_dir));
 		list_sel = 0;
