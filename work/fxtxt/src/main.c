@@ -2875,7 +2875,7 @@ static void draw_view(void)
 		if (crow >= view_top + rows()) view_top = crow - rows() + 1;
 	}
 
-	static char const *lab_read[6] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xCA\xE9\xC7\xA9", "" };
+	static char const *lab_read[6] = { "\xB1\xE0\xBC\xAD", "", "\xB2\xE9\xD5\xD2", "", "\xCA\xE9\xC7\xA9", "" };
 	/* search result: 上一 / 下一 / 再查 ... 退出 / 帮助 */
 	static char const *lab_hit[6] = {
 		"\xC9\xCF\xD2\xBB", "\xCF\xC2\xD2\xBB", "\xD4\xD9\xB2\xE9",
@@ -3568,7 +3568,9 @@ static void draw_help(void)
 	if (help_page == 3) {
 		int k = (pos_ready() && name_count > 0 && list_sel < name_count
 			 && !is_dir[list_sel]) ? pos_upsert(names[list_sel]) : -1;
-		int yy = CONTENT_Y;
+		ui_title("\xB0\xEF\xD6\xFA 4/4");
+		box_lab[5] = "\xB0\xEF\xD6\xFA";
+		int yy = CONTENT_Y + 9;
 		for (int i = 0; i < 6; i++, yy += 9) {
 			int p = k >= 0 ? pos_tab[k].bm[i] : 0;
 			char line[24];
@@ -3945,6 +3947,19 @@ static void handle_view_key(key_event_t ev)
 			return;
 		}
 	}
+	/* Reading page: F1 edits, F3 searches, F2 does nothing.  The labels
+	   say so, and the edit page's own keys are untouched. */
+	if (!edit_mode && search_n == 0) {
+		if (ev.key == KEY_F1)
+			ev.key = KEY_F3;	/* reuse the toggle below */
+		else if (ev.key == KEY_F3) {
+			mode = MODE_SEARCH;
+			py_reset();
+			return;
+		} else if (ev.key == KEY_F2) {
+			return;
+		}
+	}
 	/* While a pinyin composition is open, its own keys win. */
 	if (edit_mode && py_len > 0) {
 		int n = py_candidates();
@@ -4096,10 +4111,10 @@ static void handle_view_key(key_event_t ev)
 		}
 		return;
 	case KEY_F2:
-		/* page one: 大写锁定, page two: 查找 */
+		/* page one: exit the editor, page two: 查找 */
 		if (edit_mode && !fbar_page) {
-			caps_on = !caps_on;
-			return;
+			ev.key = KEY_F3;
+			break;			/* falls into the toggle below */
 		}
 		mode = MODE_SEARCH;
 		py_reset();
