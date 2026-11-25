@@ -148,6 +148,26 @@ def kill_stale():
         time.sleep(1.5)
 
 
+def install_source(mode):
+    """(Re)install the working source before a session build.
+
+    The tree has been reset to the original source by an outside actor, so
+    every verification run re-installs work/main_patched.c (mode 'real') or
+    the small-window debug variant of it (mode 'small').
+    """
+    base = os.path.join(ROOT, "work", "main_patched.c")
+    dst = os.path.join(ROOT, "work", "fxtxt", "src", "main.c")
+    b = open(base, "rb").read()
+    if mode == "small":
+        cap = b"for (int cap = 32768; cap >= TEXT_MIN; cap /= 2) {"
+        tmin = b"#define TEXT_MIN    4096"
+        assert b.count(cap) == 1 and b.count(tmin) == 1
+        b = b.replace(cap, b"for (int cap = 1024; cap >= TEXT_MIN; cap /= 2) {")
+        b = b.replace(tmin, b"#define TEXT_MIN 1024")
+    open(dst, "wb").write(b)
+    print("installed source mode", mode, len(b), "bytes")
+
+
 def main():
     global TAG
     argv = sys.argv[1:]
@@ -168,6 +188,7 @@ def main():
         print("attached", sid)
     else:
         kill_stale()
+        install_source(args.get("src", "small"))
         run("start")
         op = call("session.open", {"projectPath": PROJECT})
         sid = result(op).get("sessionId")

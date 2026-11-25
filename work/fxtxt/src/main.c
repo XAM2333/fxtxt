@@ -88,7 +88,33 @@ static int chunk_more;		/* something follows this window */
 static int chunk_lines;		/* lines preceding this window */
 static int chunk_rows;		/* display rows preceding this window */
 static int total_rows;		/* display rows of the whole file */
+static int total_lines;		/* lines of the whole file */
 static unsigned char *rawbuf;
+
+/* --- window table ---------------------------------------------------------
+   The document does not fit into the text buffer, so it is read in windows of
+   at most text_max bytes.  Every window but the last ends on a line boundary
+   after a whole number of screen pages (see chunk_cut), so a page never
+   straddles two windows.  The table records, for each window, its file offset
+   and the display rows and lines that precede it; a window-local row plus
+   chunk_rows is the document-wide row used by the page counter, the history,
+   the bookmarks and the search.  Heap only: static RAM is 6 KiB. */
+static int *chunk_off;		/* chunk_off[i] = file offset of window i */
+static int *chunk_r0;		/* chunk_r0[i]  = display rows before i */
+static int *chunk_l0;		/* chunk_l0[i]  = lines before i */
+static int chunk_n;		/* windows in the table */
+static int chunk_cap;		/* slots allocated in the three arrays */
+static int chunk_idx;		/* window that lives in cells[] now */
+
+static int chunk_of_row(int row);
+static void chunk_load(int idx);
+static void goto_row(int grow);
+static void goto_line(int line);
+static int global_row(void);
+static int global_line(void);
+static void page_step(int dir);
+static int hit_chunk(int hit);
+static int hit_cell(int hit);
 
 static int edit_mode;
 static int alpha_lock;		/* sticky letter mode (SHIFT+ALPHA) */
@@ -928,9 +954,9 @@ static void pos_store(void)
 	if (name_count <= 0 || list_sel < 0 || list_sel >= name_count || is_dir[list_sel])
 		return;
 	int k = pos_upsert(names[list_sel]);
-	pos_tab[k].line = offset_to_line(row_start(view_top));
+	pos_tab[k].line = global_line();
 	if (pos_tab[k].line < 0) pos_tab[k].line = 0;
-	pos_tab[k].vtop = view_top;
+	pos_tab[k].vtop = global_row();
 	pos_file_save(names[list_sel]);
 }
 
@@ -1095,12 +1121,14 @@ static void fill_state(void)
 	if (st.has_file) {
 		strncpy(st.name, names[list_sel], sizeof st.name - 1);
 		st.name[sizeof st.name - 1] = 0;
-		st.view_top = view_top;
+		st.view_top = global_row();
 		st.hscroll = hscroll;
 		/* remember the page, not the caret: scrolling only moves view_top,
 		   so saving cur_line kept an old line and the position stopped
-		   updating after the first reopen */
-		st.cur_line = offset_to_line(row_start(view_top));
+		   updating after the first reopen.  Both numbers are document-wide,
+		   because a window-local row points at the wrong line as soon as the
+		   document is read in more than one window. */
+		st.cur_line = global_line();
 		if (st.cur_line < 0) st.cur_line = 0;
 		st.cur_col = cur_col;
 		st.text_len = ncell;
@@ -1163,15 +1191,14 @@ static int fs_load_state(void)
 	if (ncell == 0 && s.text_len != 0)
 		return 0;
 
-	view_top = s.view_top;
 	hscroll = s.hscroll;
-	cur_line = s.cur_line;
 	cur_col = s.cur_col;
-
-	int tl = line_count();
-	if (view_top > tl - 1) view_top = tl - 1;
-	if (view_top < 0) view_top = 0;
-	if (cur_line > tl - 1) cur_line = tl - 1;
+	/* s.view_top is a document-wide display row and s.cur_line a
+	   document-wide line: open the window that holds them, then convert both
+	   back to window-local numbers. */
+	goto_row(s.view_top);
+	cur_line = s.cur_line - chunk_lines;
+	if (cur_line > line_count() - 1) cur_line = line_count() - 1;
 	if (cur_line < 0) cur_line = 0;
 	int len = line_len(line_start(cur_line));
 	if (cur_col > len) cur_col = len;
@@ -1252,11 +1279,17 @@ static void app_release(void)
 {
 	free(cells);
 	free(rawbuf);
-	free(names);
-	free(names_fc);
-	free(is_dir);
+	free(chunk_off);
+	free(chunk_r0);
+	free(chunk_l0);
 	cells = NULL;
 	rawbuf = NULL;
+	chunk_off = NULL;
+	chunk_r0 = NULL;
+	chunk_l0 = NULL;
+	chunk_n = 0;
+	chunk_cap = 0;
+	chunk_idx = 0;
 	names = NULL;
 	names_fc = NULL;
 	is_dir = NULL;
@@ -1633,14 +1666,14 @@ static void apply_saved_pos(void)
 	int line, vtop;
 	if (!pos_lookup(names[list_sel], &line, &vtop))
 		return;
-	int tl = line_count();
-	if (tl <= 0)
-		return;
-	cur_line = line;
-	if (cur_line > tl - 1) cur_line = tl - 1;
+	if (line < 0)
+		line = 0;
+	/* the record holds document-wide numbers: open that window, then make
+	   them window-local again */
+	goto_row(vtop);
+	cur_line = line - chunk_lines;
+	if (cur_line > line_count() - 1) cur_line = line_count() - 1;
 	if (cur_line < 0) cur_line = 0;
-	view_top = vtop;
-	if (view_top < 0) view_top = 0;
 	cur_col = 0;
 	hscroll = 0;
 }
@@ -2056,84 +2089,332 @@ static void handle_name_key(key_event_t ev)
 	}
 }
 
-/* Read the window that starts at byte `base`. Windows that do not reach EOF
-   are cut back to the last newline, so the next window starts on a line
-   boundary and scrolling can just keep going. */
-static int load_chunk(int base)
+/*=== windows ==============================================================
+   The document is larger than the text buffer, so it is read in windows of at
+   most text_max bytes.  A window must not end in the middle of a screen page,
+   otherwise the last rows of one window and the first rows of the next do not
+   join up and the page counter jumps.  The rule is:
+
+     a window ends right after the last display row that completes a page
+     (rows() = 5 display rows) *and* ends a logical line; a row that would
+     overflow the page is left for the next window.
+
+   No row is ever cut in half, so every window but the last holds a whole
+   multiple of rows() rows, and page k of the document covers the document
+   rows [rows()*k, rows()*k + rows()). */
+
+/* Length in bytes of the window that starts at s[0] (`n` bytes readable, and
+   `last` when the file ends inside this window).
+
+   The walk repeats the cell rules of decode_into_cells() because a cell is not
+   one byte (a GB2312 pair is two, a skipped control byte is none), so the byte
+   offset of a page boundary cannot be derived from the cell index alone.
+   Candidates, best first:
+     page  - a page boundary that also ends a line (the normal answer)
+     rowb  - a page boundary inside a very long line (keeps the pages whole)
+     lineb - any line end (loses the page grid but never splits a line) */
+static int chunk_cut(unsigned char const *s, int n, int last)
 {
-	ncell = 0;
-	chunk_bytes = 0;
-	chunk_more = 0;
-	FILE *f = open_read();
-	if (!f) {
-		snprintf(status_msg, sizeof status_msg, "\xB4\xF2\xB2\xBB\xBF\xAA");
-		return 0;
-	}
-	if (base > 0 && fseek(f, (long)base, SEEK_SET) != 0) {
-		fclose(f);
-		return 0;
-	}
-	int n = (int)fread(rawbuf, 1, text_max, f);
-	int more = (n == text_max) && (fgetc(f) != EOF);
-	fclose(f);
-	if (n < 0)
-		n = 0;
-	if (more) {
-		int cut = -1;
-		for (int i = n - 1; i > 0; i--)
-			if (rawbuf[i] == '\n') {
-				cut = i;
-				break;
+	int per = rows();
+	int i = 0, x = 0, done = 0;
+	int page = 0, rowb = 0, lineb = 0;
+
+	if (last || n <= 0)
+		return n;
+	while (i < n) {
+		unsigned char c = s[i];
+		uint16_t cell = 0;
+		int reps = 1, at = i;
+
+		if (c == '\n') {
+			i++;
+			done++;			/* the newline closes the row */
+			lineb = i;		/* ... and it is a line end */
+			if (done % per == 0)
+				page = rowb = i;
+			x = 0;
+			continue;
+		}
+		if (c == '\r') {
+			i++;
+			continue;
+		}
+		if (c == '\t') {
+			cell = 0;
+			reps = 4;		/* a tab is four empty cells */
+			i++;
+		} else if (c < 0x20) {
+			i++;
+			continue;
+		} else if (c >= 0x81 && i + 1 < n) {
+			unsigned char t = s[i + 1];
+			if (c >= 0xA1 && c <= 0xF7 && t >= 0xA1 && t <= 0xFE) {
+				int qu = c - 0xA0, wei = t - 0xA0;
+				int gi = (qu - 1) * 94 + (wei - 1);
+				cell = (gi >= 0 && gi < FONT_GLYPHS)
+					? (uint16_t)(CELL_CJK + gi) : 0;
+			} else
+				cell = 0;
+			i += 2;
+		} else if (c >= 0x80) {
+			i++;
+			continue;
+		} else {
+			cell = (uint16_t)(c - 0x20);
+			i++;
+		}
+		for (int k = 0; k < reps; k++) {
+			int adv = cell_adv(cell);
+			if (x + adv > TEXT_W && x > 0) {
+				/* soft wrap: this cell opens the next display row */
+				done++;
+				x = 0;
+				if (done % per == 0)
+					rowb = at;
 			}
-		if (cut > 0)
-			n = cut + 1;
-		chunk_more = 1;
+			x += adv;
+		}
 	}
-	chunk_base = base;
-	chunk_bytes = n;
-	decode_into_cells(rawbuf, n);
-	undo_clear();
-	snprintf(status_msg, sizeof status_msg, "%d\xD7\xD6\xBD\xDA GB", n);
+	if (page > 0)
+		return page;
+	if (rowb > 0)
+		return rowb;
+	if (lineb > 0)
+		return lineb;
 	return n;
 }
 
-/* Display rows from the start of the file up to byte `upto`. */
-static int rows_upto(int upto)
+/* One more slot in the window table; 0 when the heap is exhausted. */
+static int chunk_grow(void)
 {
-	int total = 0, base = 0;
-	for (int guard = 0; guard < 512; guard++) {
-		int n = load_chunk(base);
-		if (upto > 0 && chunk_base + n >= upto)
-			break;
-		total += row_count();
-		if (!chunk_more || n <= 0)
-			break;
-		base = chunk_base + n;
-	}
-	return total;
+	int cap;
+	int *p;
+
+	if (chunk_n < chunk_cap)
+		return 1;
+	cap = chunk_cap ? chunk_cap * 2 : 8;
+	p = realloc(chunk_off, (size_t)cap * sizeof *p);
+	if (!p)
+		return 0;
+	chunk_off = p;
+	p = realloc(chunk_r0, (size_t)cap * sizeof *p);
+	if (!p)
+		return 0;
+	chunk_r0 = p;
+	p = realloc(chunk_l0, (size_t)cap * sizeof *p);
+	if (!p)
+		return 0;
+	chunk_l0 = p;
+	chunk_cap = cap;
+	return 1;
 }
 
-/* Whole document: rows before the first window and its total. */
-static int count_total_rows(void)
+/* Map the file: byte offset, display rows and lines before every window.  One
+   pass over the document, done once per open (and after a save). */
+static void build_chunk_table(void)
 {
-	int total = 0, base = 0;
-	for (int guard = 0; guard < 512; guard++) {
-		int n = load_chunk(base);
-		total += row_count();
-		if (!chunk_more || n <= 0)
+	FILE *f = open_read();
+	int base = 0;
+
+	chunk_n = 0;
+	total_rows = 0;
+	total_lines = 0;
+	if (!chunk_grow())
+		return;
+	if (!f)
+		return;
+	for (;;) {
+		int n, cut, last;
+
+		if (!chunk_grow())
+			break;			/* out of memory: keep what we have */
+		if (base > 0 && fseek(f, (long)base, SEEK_SET) != 0)
 			break;
-		base = chunk_base + n;
+		n = (int)fread(rawbuf, 1, text_max, f);
+		if (n < 0)
+			n = 0;
+		last = (n < text_max) || (fgetc(f) == EOF);
+		cut = chunk_cut(rawbuf, n, last);
+		if (cut <= 0)
+			cut = n;		/* cannot happen, but never loop */
+		chunk_off[chunk_n] = base;
+		chunk_r0[chunk_n] = total_rows;
+		chunk_l0[chunk_n] = total_lines;
+		decode_into_cells(rawbuf, cut);
+		total_rows += row_count();
+		total_lines += line_count();
+		chunk_n++;
+		base += cut;
+		if (last || n <= 0)
+			break;
 	}
-	return total;
+	fclose(f);
+	if (chunk_n == 0) {
+		/* an empty document still needs one window to point at */
+		chunk_off[0] = 0;
+		chunk_r0[0] = 0;
+		chunk_l0[0] = 0;
+		chunk_n = 1;
+		total_rows = 1;
+		total_lines = 1;
+	}
+}
+
+/* Read window `idx` into cells[] and make chunk_rows/chunk_lines describe it.
+   They are never accumulated: the table holds the document-wide offset. */
+static void chunk_load(int idx)
+{
+	FILE *f;
+	int base, len;
+
+	ncell = 0;
+	chunk_bytes = 0;
+	chunk_more = 0;
+	if (chunk_n <= 0)
+		return;
+	if (idx < 0)
+		idx = 0;
+	if (idx > chunk_n - 1)
+		idx = chunk_n - 1;
+	f = open_read();
+	if (!f) {
+		snprintf(status_msg, sizeof status_msg, "\xB4\xF2\xB2\xBB\xBF\xAA");
+		return;
+	}
+	base = chunk_off[idx];
+	if (base > 0 && fseek(f, (long)base, SEEK_SET) != 0) {
+		fclose(f);
+		return;
+	}
+	len = (idx + 1 < chunk_n) ? (chunk_off[idx + 1] - base) : -1;
+	if (len <= 0 || len > text_max)
+		len = (int)fread(rawbuf, 1, text_max, f);
+	else
+		len = (int)fread(rawbuf, 1, len, f);
+	fclose(f);
+	if (len < 0)
+		len = 0;
+	chunk_idx = idx;
+	chunk_base = base;
+	chunk_bytes = len;
+	chunk_more = (idx + 1 < chunk_n);
+	chunk_rows = chunk_r0[idx];
+	chunk_lines = chunk_l0[idx];
+	decode_into_cells(rawbuf, len);
+	undo_clear();
+	snprintf(status_msg, sizeof status_msg, "%d\xD7\xD6\xBD\xDA GB", len);
+}
+
+/* Window that holds document row `row` (the table is ordered). */
+static int chunk_of_row(int row)
+{
+	int lo = 0, hi = chunk_n - 1;
+	while (lo < hi) {
+		int mid = (lo + hi + 1) / 2;
+		if (chunk_r0[mid] <= row)
+			lo = mid;
+		else
+			hi = mid - 1;
+	}
+	return lo;
+}
+
+static int chunk_of_line(int line)
+{
+	int lo = 0, hi = chunk_n - 1;
+	while (lo < hi) {
+		int mid = (lo + hi + 1) / 2;
+		if (chunk_l0[mid] <= line)
+			lo = mid;
+		else
+			hi = mid - 1;
+	}
+	return lo;
+}
+
+/* Document-wide display row / line of the first row on the screen. */
+static int global_row(void)
+{
+	return chunk_rows + view_top;
+}
+
+static int global_line(void)
+{
+	int l = chunk_lines + offset_to_line(row_start(view_top));
+	return l < 0 ? 0 : l;
+}
+
+/* Show document row `grow` at the top of the screen (loads its window). */
+static void goto_row(int grow)
+{
+	int c;
+
+	if (total_rows <= 0)
+		total_rows = 1;
+	if (grow < 0)
+		grow = 0;
+	if (grow > total_rows - 1)
+		grow = total_rows - 1;
+	c = chunk_of_row(grow);
+	if (c != chunk_idx || ncell == 0)
+		chunk_load(c);
+	view_top = grow - chunk_rows;
+	if (view_top > row_count() - 1)
+		view_top = row_count() - 1;
+	if (view_top < 0)
+		view_top = 0;
+}
+
+/* Show document line `line` at the top of the screen. */
+static void goto_line(int line)
+{
+	int c, l;
+
+	if (total_lines <= 0)
+		total_lines = 1;
+	if (line < 0)
+		line = 0;
+	if (line > total_lines - 1)
+		line = total_lines - 1;
+	c = chunk_of_line(line);
+	if (c != chunk_idx || ncell == 0)
+		chunk_load(c);
+	l = line - chunk_lines;
+	if (l > line_count() - 1)
+		l = line_count() - 1;
+	if (l < 0)
+		l = 0;
+	cur_line = l;
+	view_top = row_of_cell(line_start(l));
+	if (view_top > row_count() - 1)
+		view_top = row_count() - 1;
+	if (view_top < 0)
+		view_top = 0;
+}
+
+/* One screen up (dir < 0) or down.  Pages are stepped on the grid of rows()
+   rows, so walking down and back up visits exactly the same pages even when a
+   search or a bookmark left the screen between two of them. */
+static void page_step(int dir)
+{
+	int g = chunk_rows + view_top;
+
+	if (dir < 0) {
+		if (g <= 0)
+			return;
+		goto_row(((g - 1) / rows()) * rows());
+	} else {
+		int next = (g / rows() + 1) * rows();
+		if (next > total_rows - 1)
+			return;
+		goto_row(next);
+	}
 }
 
 static void fs_read_current(void)
 {
-	chunk_lines = 0;
-	chunk_rows = 0;
-	total_rows = count_total_rows();
-	chunk_rows = 0;
-	load_chunk(0);
+	build_chunk_table();
+	chunk_load(0);
 }
 
 /* Re-read the open file and decode it with the forced encoding. */
@@ -2435,12 +2716,10 @@ static void resume_line(void)
 	int line = rec_line_of(full);
 	if (line <= 1)
 		return;
-	int total = line_count();
-	if (line > total)
-		line = total;
-	cur_line = line - 1;
 	cur_col = 0;
-	view_top = row_of_cell(line_start(cur_line));
+	/* REC keeps a document-wide 1-based line: goto_line opens the window
+	   that holds it, which may be any window of the document. */
+	goto_line(line - 1);
 }
 
 /* open the highlighted recent entry, resuming its line */
@@ -2576,7 +2855,7 @@ static void draw_view(void)
 	ui_no_cups = 0;
 	int rows_total = row_count();
 	{
-		int lim = rows_total - rows();
+		int lim = rows_total - 1;	/* the last page may be short */
 		if (lim < 0) lim = 0;
 		if (view_top > lim) view_top = lim;
 		if (view_top < 0) view_top = 0;
@@ -2625,8 +2904,9 @@ static void draw_view(void)
 		int x = 0;
 		int caretx = -1;
 		int hl = -1;
-		if (!edit_mode && search_n > 0)
-			hl = search_hits[search_cur];
+		if (!edit_mode && search_n > 0 &&
+		    hit_chunk(search_hits[search_cur]) == chunk_idx)
+			hl = hit_cell(search_hits[search_cur]);
 		for (int c = p; c < q; c++) {
 			if (edit_mode && c == ccell)
 				caretx = x;
@@ -3325,27 +3605,28 @@ static void build_search_cells(void)
 		search_cells[search_len++] = kb_cells[i];
 }
 
-/* Store every occurrence of the query, remembering where the caret is. */
+/* A hit is packed as (window << HIT_SHIFT) | cell, so one list can cover the
+   whole document while only one window is in memory.  text_max never exceeds
+   32768, so a window-local cell index fits into HIT_SHIFT bits. */
+#define HIT_SHIFT 15
+#define HIT_MASK  0x7FFF
+
+static int hit_chunk(int hit) { return hit >> HIT_SHIFT; }
+static int hit_cell(int hit)  { return hit & HIT_MASK; }
+
+/* Append every occurrence found in the window that is loaded now. */
 static void search_collect(void)
 {
-	search_n = 0;
-	search_cur = 0;
-	if (!search_len)
+	if (!search_len || !ncell)
 		return;
-	int here = line_start(cur_line) + cur_col;
-
 	for (int i = 0; i + search_len <= ncell && search_n < SEARCH_MAX_HITS; i++) {
 		int k = 0;
 		while (k < search_len && cells[i + k] == search_cells[k])
 			k++;
 		if (k != search_len)
 			continue;
-		search_hits[search_n++] = i;
-		if (i < here)
-			search_cur = search_n;	/* the next one is the first after us */
+		search_hits[search_n++] = (chunk_idx << HIT_SHIFT) | (i & HIT_MASK);
 	}
-	if (search_cur >= search_n)
-		search_cur = 0;
 }
 
 /* Show match #search_cur and put the caret right behind it. */
@@ -3354,18 +3635,24 @@ static void search_show(void)
 	if (!search_n)
 		return;
 	int hit = search_hits[search_cur];
-	cur_line = offset_to_line(hit);
-	cur_col = hit - line_start(cur_line) + search_len;
+	int c = hit_chunk(hit);
+	int cell = hit_cell(hit);
+	if (c != chunk_idx || ncell == 0)
+		chunk_load(c);
+	if (cell > ncell - 1)
+		cell = ncell > 0 ? ncell - 1 : 0;
+	cur_line = offset_to_line(cell);
+	cur_col = cell - line_start(cur_line) + search_len;
 	int llen = line_len(line_start(cur_line));
 	if (cur_col > llen)
 		cur_col = llen;
-	view_top = row_of_cell(hit);
-	if (view_top > row_count() - rows())
-		view_top = row_count() - rows();
+	view_top = row_of_cell(cell);
+	if (view_top > row_count() - 1)
+		view_top = row_count() - 1;
 	if (view_top < 0)
 		view_top = 0;
 	hscroll = 0;
-	snprintf(status_msg, sizeof status_msg, "ÃüÖÐ%d %d/%d",
+	snprintf(status_msg, sizeof status_msg, "\xC3\xFC\xD6\xD0%d %d/%d",
 	         search_n, search_cur + 1, search_n);
 }
 
@@ -3388,19 +3675,41 @@ static int offset_to_line(int off)
 	return line;
 }
 
+/* Walk every window of the document, so a match near the end is found even
+   when the reader is at the top.  The window the reader was in is put back
+   afterwards (search_show then opens the window of the match). */
 static void run_search(void)
 {
-	for (int guard = 0; guard < 64; guard++) {
+	int here_chunk = chunk_idx;
+	int here = line_start(cur_line) + cur_col;
+	int from = 0;
+	int save_idx = chunk_idx, save_top = view_top;
+
+	search_n = 0;
+	search_cur = 0;
+	if (!search_len)
+		return;
+	for (int c = 0; c < chunk_n && search_n < SEARCH_MAX_HITS; c++) {
+		if (c != chunk_idx)
+			chunk_load(c);
 		search_collect();
-		if (!chunk_more)
-			break;
-		load_chunk(chunk_base + chunk_bytes);
-		view_top = 0;
 	}
 	if (!search_n) {
+		if (chunk_idx != save_idx)
+			chunk_load(save_idx);
+		view_top = save_top;
 		snprintf(status_msg, sizeof status_msg, "\xC3\xBB\xD5\xD2\xB5\xBD");
 		return;
 	}
+	/* the first match behind the caret, wrapping to the first one */
+	for (int i = 0; i < search_n; i++) {
+		int hc = hit_chunk(search_hits[i]), hl = hit_cell(search_hits[i]);
+		if (hc > here_chunk || (hc == here_chunk && hl > here)) {
+			from = i;
+			break;
+		}
+	}
+	search_cur = from;
 	search_show();
 }
 
@@ -3568,11 +3877,8 @@ static void handle_book_key(key_event_t ev)
 	} else if (ev.key == KEY_F2) {
 		int p = book_v[book_sel];
 		if (p > 0) {
-			int rel = p - 1 - chunk_rows;
-			if (rel < 0) rel = 0;
-			int lim = row_count() - rows();
-			if (rel > lim) rel = lim > 0 ? lim : 0;
-			view_top = rel;
+			/* p is a document-wide page: any window can be reached */
+			goto_row(p - 1);
 			mode = MODE_VIEW;
 			return;
 		}
@@ -3593,7 +3899,7 @@ static void handle_view_key(key_event_t ev)
 {
 	if (!edit_mode && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
 		book_sel = 0;
-		book_line = chunk_rows + view_top + 1;
+		book_line = global_row() + 1;
 		mode = MODE_BOOK;
 		return;
 	}
@@ -3604,7 +3910,7 @@ static void handle_view_key(key_event_t ev)
 		if (slot && pos_ready() && name_count > 0 && list_sel < name_count
 		    && !is_dir[list_sel]) {
 			int k = pos_upsert(names[list_sel]);
-			int page = chunk_rows + view_top + 1;
+			int page = global_row() + 1;	/* document-wide page */
 			if (ev.shift) {
 				pos_tab[k].bm[slot - 1] = page;
 				return;
@@ -3612,13 +3918,7 @@ static void handle_view_key(key_event_t ev)
 			int p = pos_tab[k].bm[slot - 1];
 			if (p <= 0)
 				return;
-			int rel = p - 1 - chunk_rows;
-			if (rel < 0)
-				rel = 0;
-			int lim = row_count() - rows();
-			if (rel > lim)
-				rel = lim > 0 ? lim : 0;
-			view_top = rel;
+			goto_row(p - 1);	/* document-wide page */
 			return;
 		}
 	}
@@ -3768,51 +4068,16 @@ static void handle_view_key(key_event_t ev)
 		mode = MODE_LIST;
 		return;
 	case KEY_UP:
-		if (edit_mode) {
+		if (edit_mode)
 			move_cursor_row(-1);
-		} else {
-			int total = row_count();
-			view_top -= rows();
-			if (view_top < 0) {
-				view_top = 0;
-				if (chunk_base > 0) {
-					int back = chunk_base - text_max;
-					if (back < 0)
-						back = 0;
-					int keep = back;
-					chunk_rows = keep > 0 ? rows_upto(keep) : 0;
-					load_chunk(keep);
-					view_top = row_count() - rows();
-					if (view_top < 0)
-						view_top = 0;
-					return;
-				}
-			}
-			(void)total;
-		}
+		else
+			page_step(-1);
 		return;
 	case KEY_DOWN:
-		if (edit_mode) {
+		if (edit_mode)
 			move_cursor_row(1);
-		} else {
-			int total = row_count();
-			int lim = total - rows();
-			if (lim < 0)
-				lim = 0;
-			view_top += rows();
-			if (view_top > lim) {
-				view_top = lim;
-				if (chunk_more) {
-					chunk_rows += row_count();
-					load_chunk(chunk_base + chunk_bytes);
-					view_top = 0;
-					hscroll = 0;
-					return;
-				}
-			}
-			if (view_top < 0)
-				view_top = 0;
-		}
+		else
+			page_step(1);
 		return;
 	case KEY_LEFT:
 	case KEY_RIGHT:
@@ -4503,7 +4768,7 @@ have_memory:
 		if (mode == MODE_VIEW && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
 			book_sel = 0;
 			book_load();
-			book_line = chunk_rows + view_top + 1;
+			book_line = global_row() + 1;
 			mode = MODE_BOOK;
 			/* draw right now: the loop does not repaint for this key */
 			dclear(C_WHITE);
