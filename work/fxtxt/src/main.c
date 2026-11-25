@@ -341,7 +341,7 @@ static int ui_width(char const *s)
    next key press. */
 static int status_sticky;
 static char const *hint_list = "F1\xD0\xC2\xBD\xA8 F2\xC9\xCF\xB4\xCE DEL\xC9\xBE F6\xB0\xEF";
-static char const *hint_view = "F2\xD5\xD2 F3\xB1\xE0\xBC\xAD F6\xB0\xEF\xD6\xFA";
+static char const *hint_view = "F1\xB1\xE0 F2\xD5\xD2 F5\xCA\xE9 F6\xB0\xEF";
 static char const *hint_edit_cn = "\xD6\xD0 F1\xB4\xE6 F3\xCD\xCB F4\xB1\xEA F5\xD6\xD0\xD3\xA2";
 static char const *hint_edit_en = "\xD3\xA2 F1\xB4\xE6 F3\xCD\xCB F4\xB1\xEA F5\xD6\xD0\xD3\xA2";
 
@@ -382,6 +382,7 @@ static int book_v[6];
 static int book_del_ask;
 static int book_ask_sel;	/* snapshot, drawn every frame */
 static int book_line;	/* line captured when the bookmark page opens */
+static int help_page;	/* which help page is shown, 0..3 */
 
 /* Six cups along the bottom edge (F1..F6): no bottom edge, no gaps, and each
    one carries its own short label. */
@@ -392,24 +393,8 @@ static void ui_fkeys(void)
 		int x = i * 21;
 		drect(x, BOX_Y, x, 63, C_BLACK);          /* dividers to the bottom */
 	}
-	if (edit_mode) {
-		/* F6 flips the bar: a centred 5x7 solid triangle */
-		int cy = (BOX_Y + 63) / 2;
-		for (int c = 0; c < 5; c++) {
-			int half = (4 - c) * 7 / 10;
-			for (int r = -half; r <= half; r++)
-				px_on(114 + c, cy + r);
-		}
-	}
-	static char const *hit[6] = {
-		"\xC9\xCF\xD2\xBB", "\xCF\xC2\xD2\xBB", "\xD4\xD9\xB2\xE9",
-		"", "\xCD\xCB\xB3\xF6", "\xB0\xEF\xD6\xFA"
-	};
-	int hit_mode = (!edit_mode && search_n > 0);
 	for (int i = 0; i < 6; i++) {
-		char const *s = hit_mode ? hit[i] : box_lab[i];
-		if (i == 5 && edit_mode)
-			continue;	/* the ▶ icon lives there */
+		char const *s = box_lab[i];
 		if (!s || !s[0])
 			continue;
 		int w = ui_width(s);
@@ -2812,8 +2797,48 @@ static void draw_list(void)
 	dupdate();
 }
 
-/*=== text view ============================================================*/
+/*=== F bar ================================================================
 
+   One table drives both the labels and the actions.  The bar used to be
+   described three times - a label array for drawing, a chain of hand written
+   key tests for the actions, and a third copy inside ui_fkeys() for the
+   search result - and they drifted apart on nearly every edit: F2 was
+   labelled 退出 but toggled the caps lock, F5 said 中英 but opened the
+   bookmarks, and the blank keys of editor page two still fired page one's
+   functions.  Here the label and the action of a key are the same row entry,
+   so they cannot disagree any more. */
+
+enum { FS_READ = 0, FS_HIT, FS_EDIT1, FS_EDIT2, FS_N };
+
+enum {
+	A_NONE = 0,
+	A_EDIT, A_FIND, A_BOOK, A_HELP,			/* reading page */
+	A_HIT_PREV, A_HIT_NEXT, A_HIT_QUERY, A_HIT_CLOSE,	/* result list */
+	A_SAVE, A_LEAVE, A_CAPS, A_PUNCT, A_CN, A_PAGE, A_UNDO
+};
+
+static unsigned char const fk_act[FS_N][6] = {
+	{ A_EDIT,     A_FIND,     A_NONE,      A_NONE,  A_BOOK,      A_HELP },
+	{ A_HIT_PREV, A_HIT_NEXT, A_HIT_QUERY, A_NONE,  A_HIT_CLOSE, A_HELP },
+	{ A_SAVE,     A_LEAVE,    A_CAPS,      A_PUNCT, A_CN,        A_PAGE },
+	{ A_UNDO,     A_FIND,     A_NONE,      A_NONE,  A_HELP,      A_PAGE },
+};
+
+static char const *fk_lab[FS_N][6] = {
+	{ "\xB1\xE0\xBC\xAD", "\xB2\xE9\xD5\xD2", 0, 0, "\xCA\xE9\xC7\xA9", "\xB0\xEF\xD6\xFA" },
+	{ "\xC9\xCF\xCC\xF5", "\xCF\xC2\xCC\xF5", "\xD4\xD9\xB2\xE9", 0, "\xCD\xCB\xB3\xF6", "\xB0\xEF\xD6\xFA" },
+	{ "\xB1\xA3\xB4\xE6", "\xCD\xCB\xB3\xF6", "\xB4\xF3\xD0\xB4", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB7\xAD\xD2\xB3" },
+	{ "\xB3\xB7\xCF\xFA", "\xB2\xE9\xD5\xD2", 0, 0, "\xB0\xEF\xD6\xFA", "\xB7\xAD\xD2\xB3" },
+};
+
+static int fk_state(void)
+{
+	if (!edit_mode)
+		return search_n > 0 ? FS_HIT : FS_READ;
+	return fbar_page ? FS_EDIT2 : FS_EDIT1;
+}
+
+/*=== text view ====
 /* Inline pinyin composition: buffer + candidate row on the status line. */
 static void comp_draw(void)
 {
@@ -2875,25 +2900,10 @@ static void draw_view(void)
 		if (crow >= view_top + rows()) view_top = crow - rows() + 1;
 	}
 
-	static char const *lab_read[6] = { "\xB1\xE0\xBC\xAD", "\xB2\xE9\xD5\xD2", "", "", "\xCA\xE9\xC7\xA9", "\xB0\xEF\xD6\xFA" };
-	/* search result: 上一 / 下一 / 再查 ... 退出 / 帮助 */
-	static char const *lab_hit[6] = {
-		"\xC9\xCF\xD2\xBB", "\xCF\xC2\xD2\xBB", "\xD4\xD9\xB2\xE9",
-		"", "\xCD\xCB\xB3\xF6", "\xB0\xEF\xD6\xFA"
-	};
-	static char const *lab_edit[6] = { "\xB1\xA3\xB4\xE6", "\xCD\xCB\xB3\xF6", "\xB4\xF3\xD0\xB4", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB4\xF3\xD0\xB4" };
-	if (!edit_mode && search_n > 0)
-		for (int i = 0; i < 6; i++)
-			box_lab[i] = lab_hit[i];
 	{
-		static char const *r1[5] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xB0\xEF\xD6\xFA" };
-		static char const *e1[5] = { "\xB3\xB7\xCF\xFA", "\xB2\xE9\xD5\xD2",
-		                             "", "", "\xB0\xEF\xD6\xFA" };
-		for (int i = 0; i < 5; i++)
-			box_lab[i] = edit_mode
-				? (fbar_page ? e1[i] : lab_edit[i])
-				: lab_read[i];
-		box_lab[5] = edit_mode ? "\xB7\xAD\xD2\xB3" : "\xB0\xEF\xD6\xFA";
+		int st = fk_state();
+		for (int i = 0; i < 6; i++)
+			box_lab[i] = fk_lab[st][i];
 	}
 
 	int caret_x = -1, caret_y = -1;
@@ -3101,7 +3111,7 @@ static void draw_search(void)
 	box_lab[0] = "\xB2\xE9\xD5\xD2";		/* F1  查找 */
 	box_lab[1] = "\xC9\xCF\xD2\xBB";		/* F2  上一条 */
 	box_lab[2] = "\xCF\xC2\xD2\xBB";		/* F3  下一条 */
-	box_lab[4] = "\xB0\xEF\xD6\xFA";		/* F5  帮助 */
+	box_lab[5] = "\xB0\xEF\xD6\xFA";		/* F6  帮助 */
 	int y = CONTENT_Y + 2;
 	draw_ui(2, y, "\xB2\xE9\xD5\xD2", 0);
 	int x = 30;
@@ -3159,7 +3169,8 @@ static void handle_search_key(key_event_t ev)
 			}
 			return;
 		}
-		if (ev.key == KEY_F5 && ev.shift == 0) {
+		if (ev.key == KEY_F6 && ev.shift == 0) {
+			help_page = 3;		/* the find page's own help */
 			help_back = MODE_SEARCH;
 			mode = MODE_HELP;
 			return;
@@ -3533,66 +3544,66 @@ static void draw_keyboard(void)
 
 /*=== help =================================================================*/
 
-static int help_page;
 static int help_sel;
 static int help_back = MODE_LIST;	/* where to return after help */
 static char del_name[NAME_MAX_L + 1];	/* file waiting for confirmation */
 static int confirm_kind;		/* 0 = delete, 1 = discard edits */
 
-static int help_page;
-
 static void draw_help(void)
 {
-	ui_no_cups = 0;
+	ui_no_cups = 1;		/* no cups: the bottom row carries the hint */
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = 0;
+	/* four pages, all with a title, a page name on the first line and the
+	   same paging hint - page four used to draw bookmark slots with no
+	   title, no text and no dupdate() at all */
 	static char const *page1[] = {
-		"\xA1\xFC\xA1\xFD\x20\xD1\xA1\xD4\xF1\x20\x20\x45\x58\x45\x20\xB4\xF2\xBF\xAA",
-		"\x46\x31\x20\xD0\xC2\xBD\xA8\x20\x20\x46\x32\x20\xB8\xC4\xC3\xFB",
-		"\x46\x33\x20\xBD\xFC\xC6\xDA\x20\x20\x46\x36\x20\xB0\xEF\xD6\xFA",
-		"\x44\x45\x4C\x20\xC9\xBE\xB3\xFD\x20\x20\x45\x58\x49\x54\x20\xC9\xCF\xBC\xB6",
+		"\xC9\xCF\xCF\xC2\xBC\xFC\x20\xD1\xA1\xD4\xF1\x20\x20\x20\x45\x58\x45\x20\xB4\xF2\xBF\xAA",
+		"\x46\x31\x20\xD0\xC2\xBD\xA8\x20\x20\x20\x46\x32\x20\xB8\xC4\xC3\xFB",
+		"\x44\x45\x4C\x20\xC9\xBE\xB3\xFD\x20\x20\x20\x46\x36\x20\xB0\xEF\xD6\xFA",
+		"\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8\xC9\xCF\xBC\xB6",
 	};
 	static char const *page2[] = {
-		"\xA1\xFC\xA1\xFD\x20\xB9\xF6\xB6\xAF\x20\x20\xA1\xFB\xA1\xFA\x20\xB7\xAD\xD2\xB3",
-		"\x46\x31\x20\xB2\xE9\xD5\xD2\x20\x20\x46\x32\x20\xB1\xE0\xBC\xAD",
-		"\x46\x36\x20\xB0\xEF\xD6\xFA\x20\x20\x45\x58\x49\x54\x20\xC1\xD0\xB1\xED",
-		"\xA1\xFC\xA1\xFD\x20\xC5\xD0\xB6\xA8\xCE\xBB\xD6\xC3",
+		"\xC9\xCF\xCF\xC2\xBC\xFC\x20\xB7\xAD\xD2\xB3\x20\x20\x20\x45\x58\x45\x20\xB0\xEF\xD6\xFA",
+		"\x46\x31\x20\xB1\xE0\xBC\xAD\x20\x20\x20\x46\x32\x20\xB2\xE9\xD5\xD2",
+		"\x46\x35\x20\xCA\xE9\xC7\xA9\x20\x20\x20\x46\x36\x20\xB0\xEF\xD6\xFA",
+		"\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8\xC1\xD0\xB1\xED",
 	};
 	static char const *page3[] = {
-		"\x46\x31\x20\xB1\xA3\xB4\xE6\x20\x20\x46\x32\x20\xCD\xCB\xB3\xF6",
-		"\x46\x33\x20\xB4\xF3\xD0\xB4\x20\x20\x46\x34\x20\xB1\xEA\xB5\xE3",
-		"\x46\x35\x20\xD6\xD0\xD3\xA2\x20\x20\x46\x36\x20\xB7\xAD\xD2\xB3",
-		"\x45\x58\x45\x20\xBB\xBB\xD0\xD0\x20\x20\x44\x45\x4C\x20\xC9\xBE\xD7\xD6",
+		"\x46\x31\x20\xB1\xA3\xB4\xE6\x20\x20\x20\x46\x32\x20\xCD\xCB\xB3\xF6",
+		"\x46\x33\x20\xB4\xF3\xD0\xB4\x20\x20\x20\x46\x34\x20\xB1\xEA\xB5\xE3",
+		"\x46\x35\x20\xD6\xD0\xD3\xA2\x20\x20\x20\x46\x36\x20\xB7\xAD\xD2\xB3",
+		"\x45\x58\x45\x20\xBB\xBB\xD0\xD0\x20\x20\x20\x44\x45\x4C\x20\xC9\xBE\xD7\xD6",
 	};
-	static char const *titles[] = { "\xC1\xD0\xB1\xED\xD2\xB3", "\xD4\xC4\xB6\xC1\xD2\xB3", "\xB1\xE0\xBC\xAD\xD2\xB3" };
-	if (help_page == 3) {
-		int k = (pos_ready() && name_count > 0 && list_sel < name_count
-			 && !is_dir[list_sel]) ? pos_upsert(names[list_sel]) : -1;
-		int yy = CONTENT_Y;
-		for (int i = 0; i < 6; i++, yy += 9) {
-			int p = k >= 0 ? pos_tab[k].bm[i] : 0;
-			char line[24];
-			if (p > 0)
-				snprintf(line, sizeof line, "%d:%d", i + 1, p);
-			else
-				snprintf(line, sizeof line, "%d:-", i + 1);
-			draw_ui(6, yy, line, i == help_sel);
-		}
-		return;
-	}
-	char const **lines = help_page == 0 ? page1 : (help_page == 1 ? page2 : page3);
+	static char const *page4[] = {
+		"\x46\x31\x20\xCB\xD1\xCB\xF7\x20\x20\x20\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8",
+		"\x46\x32\x20\xC9\xCF\xCC\xF5\x20\x20\x20\x46\x33\x20\xCF\xC2\xCC\xF5",
+		"\x46\x36\x20\xB0\xEF\xD6\xFA\x20\x20\x20\xC9\xCF\xCF\xC2\xBC\xFC\x20\xBB\xBB\xC3\xFC\xD6\xD0",
+		"\xBD\xE1\xB9\xFB\xD2\xB3\x20\x46\x35\x20\xCD\xCB\xB3\xF6\xBD\xE1\xB9\xFB",
+	};
+	static char const *titles[] = { "\xC1\xD0\xB1\xED\xD2\xB3", "\xD4\xC4\xB6\xC1\xD2\xB3", "\xB1\xE0\xBC\xAD\xD2\xB3", "\xB2\xE9\xD5\xD2\xD2\xB3" };
+	char const **pages[4];
 	char head[32];
-	snprintf(head, sizeof head, "\xB0\xEF\xD6\xFA %d/4", help_page + 1);
+	int y;
+
+	pages[0] = page1;
+	pages[1] = page2;
+	pages[2] = page3;
+	pages[3] = page4;
+	if (help_page < 0 || help_page > 3)
+		help_page = 0;
+	snprintf(head, sizeof head, "\xB0\xEF\xD6\xFA\x20\x25\x64\x2F\x34", help_page + 1);
 	ui_title(head);
-
-	/* page name on the first content line, then four key lines */
 	draw_ui(2, CONTENT_Y, titles[help_page], 0);
-
-	int y = CONTENT_Y + 9;
+	y = CONTENT_Y + 9;
 	for (int i = 0; i < 4; i++, y += 9)
-		draw_ui(2, y, lines[i], 0);
-
-	ui_hints("\xA1\xFB\xA1\xFA \xB7\xAD\xD2\xB3  EXIT \xB9\xD8\xB1\xD5", "", 0);
+		draw_ui(2, y, pages[help_page][i], 0);
+	{
+		/* paging hint along the bottom edge, left aligned so the first
+		   glyph is never clipped */
+		draw_ui(2, STATUS_Y, "\xD7\xF3\xD3\xD2\xBC\xFC\x20\xB7\xAD\xD2\xB3\x20\x20\x45\x58\x49\x54\x20\xB9\xD8\xB1\xD5", 0);
+	}
+	ui_hints("", "", 0);
 	dupdate();
 }
 
@@ -3809,41 +3820,43 @@ static void book_load(void)
 	int k = pos_upsert(names[list_sel]);
 	for (int i = 0; i < 6; i++) {
 		int v = pos_tab[k].bm[i];
-		/* page + 1 on disk: 0 and 1 both mean "never stored", and old
-		   records land far outside the plausible range */
-		book_v[i] = (v >= 2 && v < 200001) ? v - 1 : 0;
+		/* the record holds row + 1, 0 means "never stored"; keep the
+		   stored value so the page can print it as the row number */
+		book_v[i] = (v >= 1 && v < 200001) ? v : 0;
 	}
 }
 
 static void draw_book(void)
 {
-	ui_clip_x = 128;	/* draw_ui clips at this: without it the page is blank */
-	{
-		/* probe: what the path builder actually gets to see */
-		char b[48];
-		snprintf(b, sizeof b, "cp:%s", cur_path);
-		draw_ui(2, 33, b, 0);
-		snprintf(b, sizeof b, "dir:%s", cur_dir);
-		draw_ui(2, 44, b, 0);
-	}
+	ui_clip_x = 128;
 	ui_no_cups = 0;
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = NULL;
 	box_lab[0] = "\xB4\xE6";
 	box_lab[1] = "\xB6\xC1\xC8\xA1";
 	box_lab[5] = "\xC9\xBE\xB3\xFD";
-	ui_title("\xCA\xE9\xC7\xA9");
+	{
+		/* the row the page was opened on, instead of the path dump */
+		char head[24];
+		snprintf(head, sizeof head, "\xCA\xE9\xC7\xA9\x20\xD0\xD0\x25\x64", book_line);
+		ui_title(head);
+	}
 	for (int i = 0; i < 6; i++) {
 		int col = i % 2, row = i / 2;
 		int p = book_v[i];
 		char line[24];
-		if (p > 0) snprintf(line, sizeof line, "%d:%d", i + 1, p);
-		else snprintf(line, sizeof line, "%d:-", i + 1);
+		if (p > 0)
+			snprintf(line, sizeof line, "%d:%d", i + 1, p);
+		else
+			snprintf(line, sizeof line, "%d:-", i + 1);
 		draw_ui(col ? 68 : 6, CONTENT_Y + row * 12, line, i == book_sel);
 	}
 	if (book_del_ask)
-		draw_ui(6, CONTENT_Y + 40, "\xC8\xB7\xC8\xCF\xC9\xBE\xB3\xFD?", 0);
+		draw_ui(2, CONTENT_Y + 36, "\xC8\xB7\xC8\xCF\xC9\xBE\xB3\xFD\x3F", 0);
+	else
+		draw_ui(2, CONTENT_Y + 36, "\x46\x36\x20\xC9\xBE\xB3\xFD\x20\x20\x20\x45\x58\x49\x54\x20\xCD\xCB\xB3\xF6", 0);
 	ui_status("");		/* the six F boxes */
+	dupdate();		/* the loop draws before it waits for a key */
 }
 
 static void handle_book_key(key_event_t ev)
@@ -3870,7 +3883,7 @@ static void handle_book_key(key_event_t ev)
 		book_del_ask = 0;
 	} else if (ev.key == KEY_F1) {
 		if (k >= 0) {
-			pos_tab[k].bm[book_sel] = book_line + 1;
+			pos_tab[k].bm[book_sel] = book_line;	/* already row + 1 */
 			book_load();
 		}
 		book_del_ask = 0;
@@ -3895,67 +3908,69 @@ static void handle_book_key(key_event_t ev)
 	dupdate();
 }
 
-static void handle_view_key(key_event_t ev)
+/* Caret on the row the screen starts with, then edit mode on. */
+static void enter_edit(void)
 {
-	if (!edit_mode && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
-		book_sel = 0;
-		book_line = global_row() + 1;
-		mode = MODE_BOOK;
+	int rp, base, len, col;
+
+	edit_mode = 1;
+	fbar_page = 0;
+	/* view_top counts display rows but cur_line counts logical lines:
+	   convert, otherwise paging N times moves the caret N*wrap lines
+	   further down. */
+	rp = row_start(view_top);
+	cur_line = offset_to_line(rp);
+	if (cur_line > line_count() - 1)
+		cur_line = line_count() - 1;
+	/* first cell of that logical line as shown on this page, caret one
+	   character further right */
+	base = line_start(cur_line);
+	len = line_len(base);
+	col = rp - base;
+	if (col < 0)
+		col = 0;
+	if (col > len)
+		col = len;
+	cur_col = (col < len) ? col + 1 : len;
+}
+
+/* Leave edit mode; unsaved text asks before it is thrown away. */
+static void leave_edit(void)
+{
+	if (dirty) {
+		confirm_kind = 1;
+		mode = MODE_CONFIRM;
 		return;
 	}
-	if (!edit_mode && (ev.shift || ev.alpha)) {
-		int slot = 0;
-		if (ev.key >= KEY_F1 && ev.key <= KEY_F6)
-			slot = (int)(ev.key - KEY_F1) + 1;
-		if (slot && pos_ready() && name_count > 0 && list_sel < name_count
-		    && !is_dir[list_sel]) {
+	edit_mode = 0;
+	fbar_page = 0;
+	py_reset();
+}
+
+/* Reading / editing page.  Every F key resolves through fk_act[], so a key
+   can only ever do what its label says. */
+static void handle_view_key(key_event_t ev)
+{
+	int is_f = (ev.key >= KEY_F1 && ev.key <= KEY_F6);
+
+	/* SHIFT / ALPHA + F1..F6 in the reader: store or recall a bookmark */
+	if (!edit_mode && is_f && (ev.shift || ev.alpha)) {
+		int slot = (int)(ev.key - KEY_F1) + 1;
+		if (search_n == 0 && pos_ready() && name_count > 0
+		    && list_sel < name_count && !is_dir[list_sel]) {
 			int k = pos_upsert(names[list_sel]);
-			int page = global_row() + 1;	/* document-wide page */
+			int page = global_row() + 1;	/* document-wide row */
 			if (ev.shift) {
 				pos_tab[k].bm[slot - 1] = page;
-				return;
+			} else {
+				int p = pos_tab[k].bm[slot - 1];
+				if (p > 0)
+					goto_row(p - 1);
 			}
-			int p = pos_tab[k].bm[slot - 1];
-			if (p <= 0)
-				return;
-			goto_row(p - 1);	/* document-wide page */
-			return;
 		}
+		return;
 	}
-	if (!edit_mode && search_n > 0) {
-		/* F1 / F4 walk the matches; their normal meaning returns when
-		   no search is active */
-		if (ev.key == KEY_F1) {
-			search_cur = (search_cur + search_n - 1) % search_n;
-			search_show();
-			return;
-		}
-		if (ev.key == KEY_F2 || ev.key == KEY_F4) {
-			search_cur = (search_cur + 1) % search_n;
-			search_show();
-			return;
-		}
-		if (ev.key == KEY_F3) {		/* back to the query page */
-			mode = MODE_SEARCH;
-			return;
-		}
-		if (ev.key == KEY_F5) {		/* leave the result state */
-			search_n = 0;
-			search_len = 0;
-			return;
-		}
-	}
-	/* Reading page: F1 edits, F2 searches, F3 also searches (it used to
-	   be the edit key, some habits die hard).  Edit mode is untouched. */
-	if (!edit_mode && search_n == 0) {
-		if (ev.key == KEY_F1)
-			ev.key = KEY_F3;		/* reuse the toggle below */
-		else if (ev.key == KEY_F2 || ev.key == KEY_F3) {
-			mode = MODE_SEARCH;
-			py_reset();
-			return;
-		}
-	}
+
 	/* While a pinyin composition is open, its own keys win. */
 	if (edit_mode && py_len > 0) {
 		int n = py_candidates();
@@ -3987,42 +4002,90 @@ static void handle_view_key(key_event_t ev)
 		}
 	}
 
-	if (ev.key == KEY_F2)
-		ev.key = KEY_F3;	/* F2 and F3 both toggle editing */	/* F2 编辑 is the old F3 */
-	if (!edit_mode && ev.key == KEY_F1) {
-		mode = MODE_SEARCH;
-		py_reset();
-		return;
-	}
-	if (ev.key == KEY_F6) {
-		if (edit_mode) {
-			fbar_page = fbar_page ? 0 : 1;
-		} else {
+	if (is_f) {
+		int st = fk_state();
+		if (edit_mode && (ev.shift || ev.alpha)) {
+			/* SHIFT+F5 is the letter lock; nothing else is bound */
+			if (ev.shift && ev.key == KEY_F5)
+				alpha_lock = !alpha_lock;
+			return;
+		}
+		switch (fk_act[st][ev.key - KEY_F1]) {
+		case A_EDIT:
+			enter_edit();
+			return;
+		case A_FIND:
+			mode = MODE_SEARCH;
+			py_reset();
+			return;
+		case A_BOOK:
+			book_sel = 0;
+			book_load();
+			book_line = global_row() + 1;
+			mode = MODE_BOOK;
+			return;
+		case A_HELP:
+			help_page = (st == FS_READ || st == FS_HIT) ? 1 : 2;
 			help_back = MODE_VIEW;
 			mode = MODE_HELP;
-		}
-		return;
-	}
-	if (edit_mode && fbar_page && ev.key == KEY_F1) {
-		undo_apply();
-		return;
-	}
-
-
-	if (ev.key == KEY_F5 && (!edit_mode || ev.shift || fbar_page)) {
-		help_back = MODE_VIEW;
-		mode = MODE_HELP;
-		return;
-	}
-	if (edit_mode && ev.key == KEY_F5 && !fbar_page) {
-		if (ev.shift) {
-			/* SHIFT+F5 = 字母锁（与 SHIFT+ALPHA 等价），只显示徽标 */
-			alpha_lock = !alpha_lock;
-		} else {
-			/* only the leading 中/英 changes, no message */
+			return;
+		case A_HIT_PREV:
+			if (search_n > 0) {
+				search_cur = (search_cur + search_n - 1) % search_n;
+				search_show();
+			}
+			return;
+		case A_HIT_NEXT:
+			if (search_n > 0) {
+				search_cur = (search_cur + 1) % search_n;
+				search_show();
+			}
+			return;
+		case A_HIT_QUERY:
+			help_page = 3;
+			mode = MODE_SEARCH;
+			return;
+		case A_HIT_CLOSE:
+			search_n = 0;
+			search_len = 0;
+			return;
+		case A_SAVE:
+			strncpy(relist_name, names[list_sel], NAME_MAX_L);
+			relist_name[NAME_MAX_L] = 0;
+			gint_world_switch(GINT_CALL(fs_write_current));
+			dirty = 0;
+			gint_world_switch(GINT_CALL(fs_relist_keep));
+			return;
+		case A_LEAVE:
+			leave_edit();
+			return;
+		case A_CAPS:
+			caps_on = !caps_on;
+			return;
+		case A_PUNCT:
+			open_keyboard(0, PAGE_PUNCT);
+			return;
+		case A_CN:
 			cn_mode = !cn_mode;
 			py_reset();
+			return;
+		case A_PAGE:
+			fbar_page = fbar_page ? 0 : 1;
+			return;
+		case A_UNDO:
+			undo_apply();
+			return;
+		default:			/* A_NONE: a blank key does nothing */
+			return;
 		}
+	}
+
+	/* up / down walk the matches while a result list is on the screen */
+	if (!edit_mode && search_n > 0 &&
+	    (ev.key == KEY_UP || ev.key == KEY_DOWN)) {
+		search_cur = (search_cur +
+		              (ev.key == KEY_DOWN ? 1 : search_n - 1)) % search_n;
+		search_show();
 		return;
 	}
 
@@ -4070,12 +4133,13 @@ static void handle_view_key(key_event_t ev)
 			mode = MODE_CONFIRM;
 			return;
 		}
+		/* leave editing for good: the next file opens in the reader */
+		edit_mode = 0;
+		fbar_page = 0;
 		search_n = 0;
 		search_len = 0;
+		py_reset();
 		gint_world_switch(GINT_CALL(fs_save_state));
-		{
-		}
-			gint_world_switch(GINT_CALL(fs_save_state));	/* remember the page before the mode changes */
 		mode = MODE_LIST;
 		return;
 	case KEY_UP:
@@ -4106,82 +4170,6 @@ static void handle_view_key(key_event_t ev)
 			cur_col = off - line_start(cur_line);
 		}
 		return;
-	case KEY_F2:
-		/* page one: 退出编辑 (labels say 退出), page two: 查找 */
-		if (edit_mode && !fbar_page) {
-			if (dirty) {
-				confirm_kind = 1;
-				mode = MODE_CONFIRM;
-				return;
-			}
-			edit_mode = !edit_mode;
-			fbar_page = 0;
-			return;
-		}
-		mode = MODE_SEARCH;
-		py_reset();
-		return;
-	case KEY_F1:
-		if (edit_mode) {
-			strncpy(relist_name, names[list_sel], NAME_MAX_L);
-			relist_name[NAME_MAX_L] = 0;
-			gint_world_switch(GINT_CALL(fs_write_current));
-			dirty = 0;
-			gint_world_switch(GINT_CALL(fs_relist_keep));
-		}
-		return;
-	case KEY_F4:
-		if (edit_mode)
-			open_keyboard(0, PAGE_PUNCT);
-		return;
-	case KEY_F6:
-		if (!edit_mode) {
-			help_back = MODE_VIEW;
-			mode = MODE_HELP;
-			return;
-		}
-		if (!edit_mode && fbar_page && ev.key == KEY_F5) {
-			help_back = MODE_VIEW;
-			mode = MODE_HELP;
-			return;
-		}
-		fbar_page = fbar_page ? 0 : 1;
-		return;
-	case KEY_F3:
-		/* page one: 大写锁定 */
-		if (edit_mode && !fbar_page) {
-			caps_on = !caps_on;
-			return;
-		}
-		if (edit_mode && dirty) {
-			confirm_kind = 1;
-			mode = MODE_CONFIRM;
-			return;
-		}
-		edit_mode = !edit_mode;
-		fbar_page = 0;		/* every page starts on F bar page one */
-		if (edit_mode) {
-			/* view_top counts display rows but cur_line counts
-			   logical lines: convert, otherwise paging N times
-			   moves the caret N*wrap lines further down. */
-			int rp = row_start(view_top);
-			cur_line = offset_to_line(rp);
-			if (cur_line > line_count() - 1)
-				cur_line = line_count() - 1;
-			/* first cell of that logic line as shown on this page,
-			   caret one character further right */
-			int base = line_start(cur_line);
-			int len = line_len(base);
-			int col = rp - base;
-			if (col < 0)
-				col = 0;
-			if (col > len)
-				col = len;
-			cur_col = (col < len) ? col + 1 : len;
-		} else {
-			py_reset();
-		}
-		return;
 	case KEY_DEL:
 		if (edit_mode) {
 			if (ev.shift) {
@@ -4193,9 +4181,10 @@ static void handle_view_key(key_event_t ev)
 		}
 		return;
 	case KEY_EXE:
-		if (edit_mode)
+		if (edit_mode) {
 			text_newline();		/* 换行 = EXE */
-		else {
+		} else {
+			help_page = 1;
 			help_back = MODE_VIEW;
 			mode = MODE_HELP;
 		}
@@ -4388,7 +4377,8 @@ static void draw_confirm(void)
 		snprintf(tmp, sizeof tmp, "%d", book_ask_sel + 1);
 		draw_ui(2, CONTENT_Y + 4, "\xC8\xB7\xB6\xA8\xC9\xBE\xB3\xFD?", 0);
 		draw_ui(2, CONTENT_Y + 16, tmp, 0);
-		ui_hints("EXE\xC9\xBE\xB3\xFD  EXIT\xC8\xA1\xCF\xFB", "", 0);
+		draw_ui(2, STATUS_Y, "\x45\x58\x45\x20\xC9\xBE\xB3\xFD\x20\x20\x20\x45\x58\x49\x54\x20\xC8\xA1\xCF\xFB", 0);
+		ui_hints("", "", 0);
 		dupdate();
 		return;
 	}
@@ -4397,6 +4387,7 @@ static void draw_confirm(void)
 		draw_ui(2, CONTENT_Y + 2, "\xB7\xC5\xC6\xFA\xD0\xDE\xB8\xC4\xA3\xBF", 0);
 		draw_ui(2, CONTENT_Y + 12, "EXE\xB7\xC5\xC6\xFA", 0);
 		draw_ui(2, CONTENT_Y + 22, "EXIT\xBC\xCC\xD0\xF8\xB1\xE0\xBC\xAD", 0);
+		draw_ui(2, STATUS_Y, "\x45\x58\x45\x20\xB7\xC5\xC6\xFA\x20\x20\x20\x45\x58\x49\x54\x20\xBC\xCC\xD0\xF8\xB1\xE0\xBC\xAD", 0);
 		dupdate();
 		return;
 	}
@@ -4404,20 +4395,26 @@ static void draw_confirm(void)
 	int y = CONTENT_Y + 4;
 	draw_ui(2, y, "\xC8\xB7\xB6\xA8\xC9\xBE\xB3\xFD\xA3\xBF", 0);
 	draw_fname(2, y + 12, del_name, 0);
-	ui_hints("EXE\xC9\xBE\xB3\xFD  EXIT\xC8\xA1\xCF\xFB", "", 0);
+	draw_ui(2, STATUS_Y, "\x45\x58\x45\x20\xC9\xBE\xB3\xFD\x20\x20\x20\x45\x58\x49\x54\x20\xC8\xA1\xCF\xFB", 0);
+	ui_hints("", "", 0);
 	dupdate();
 }
 
 static void handle_confirm_key(key_event_t ev)
 {
 	if (confirm_kind == 2) {
+		/* only EXE and EXIT answer this page: any other key used to drop
+		   straight back to the bookmark list, which made it feel like the
+		   page vanished by itself */
 		if (ev.key == KEY_EXE && pos_ready() && name_count > 0
 		    && list_sel < name_count && !is_dir[list_sel]) {
 			int k = pos_upsert(names[list_sel]);
 			pos_tab[k].bm[book_ask_sel] = 0;
 			book_load();
+			mode = MODE_BOOK;
+		} else if (ev.key == KEY_EXIT) {
+			mode = MODE_BOOK;
 		}
-		mode = MODE_BOOK;
 		return;
 	}
 	if (confirm_kind == 1) {
@@ -4553,6 +4550,7 @@ static void handle_list_key(key_event_t ev)
 		cur_line = cur_col = 0;
 		view_top = hscroll = 0;
 		edit_mode = 0;
+		fbar_page = 0;
 		dirty = 0;
 		gint_world_switch(GINT_CALL(fs_read_current));
 		apply_saved_pos();
@@ -4791,18 +4789,9 @@ have_memory:
 			draw_keyboard();
 
 		key_event_t ev = next_event();
+		if (ev.key == 0)
+			continue;	/* idle / blink tick: repaint, do not dispatch */
 		status_sticky = 0;
-		if (mode == MODE_VIEW && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
-			book_sel = 0;
-			book_load();
-			book_line = global_row() + 1;
-			mode = MODE_BOOK;
-			/* draw right now: the loop does not repaint for this key */
-			dclear(C_WHITE);
-			draw_book();
-			dupdate();
-			continue;
-		}
 
 		if (ev.key == KEY_ACON && ev.shift) {
 			/* SHIFT+AC/ON powers off; a bare AC/ON does nothing */
@@ -4845,7 +4834,7 @@ have_memory:
 				help_page = (help_page + 3) % 4;
 			else if (!ev_repeat && ev.key == KEY_RIGHT)
 				help_page = (help_page + 1) % 4;
-			else if (ev.key == KEY_EXIT || ev.key == KEY_EXE || ev.key == KEY_F2)
+			else if (ev.key == KEY_EXIT || ev.key == KEY_EXE)
 				mode = help_back;
 		} else {
 			handle_kb_key(ev);
