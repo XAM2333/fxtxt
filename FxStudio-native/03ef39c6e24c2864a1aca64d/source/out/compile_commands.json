@@ -1,0 +1,32 @@
+[
+{
+  "directory": "E:/fxtxtviewer/.tmp/FxStudio-native/853b8c0357c863eb238724f4/build",
+  "command": "E:\\fxtxtviewer\\ref\\pkg3\\FxStudio-0.2.0-win-x64\\sdk\\native\\bin\\sh-elf-gcc.exe -DFX9860G -DTARGET_FX9860G -O3 -DNDEBUG -mb -fno-builtin -nostdlib -Wa,--dsp -Wall -Wextra -Os -ffunction-sections -fdata-sections -fstrict-volatile-bitfields -o CMakeFiles\\fxtxt.dir\\src\\main.c.obj -c E:\\fxtxtviewer\\.tmp\\FxStudio-native\\853b8c0357c863eb238724f4\\source\\src\\main.c",
+  "file": "E:\\fxtxtviewer\\.tmp\\FxStudio-native\\853b8c0357c863eb238724f4\\source\\src\\main.c",
+  "output": "CMakeFiles\\fxtxt.dir\\src\\main.c.obj"
+},
+{
+  "directory": "E:/fxtxtviewer/.tmp/FxStudio-native/853b8c0357c863eb238724f4/build",
+  "command": "E:\\fxtxtviewer\\ref\\pkg3\\FxStudio-0.2.0-win-x64\\sdk\\native\\bin\\sh-elf-gcc.exe -DFX9860G -DTARGET_FX9860G -O3 -DNDEBUG -mb -fno-builtin -nostdlib -Wa,--dsp -Wall -Wextra -Os -ffunction-sections -fdata-sections -fstrict-volatile-bitfields -o CMakeFiles\\fxtxt.dir\\src\\font_ascii.c.obj -c E:\\fxtxtviewer\\.tmp\\FxStudio-native\\853b8c0357c863eb238724f4\\source\\src\\font_ascii.c",
+  "file": "E:\\fxtxtviewer\\.tmp\\FxStudio-native\\853b8c0357c863eb238724f4\\source\\src\\font_ascii.c",
+  "output": "CMakeFiles\\fxtxt.dir\\src\\font_ascii.c.obj"
+},
+{
+  "directory": "E:/fxtxtviewer/.tmp/FxStudio-native/853b8c0357c863eb238724f4/build",
+  "command": "E:\\fxtxtviewer\\ref\\pkg3\\FxStudio-0.2.0-win-x64\\sdk\\native\\bin\\sh-elf-gcc.exe -DFX9860G -DTARGET_FX9860G -O3 -DNDEBUG -mb -fno-builtin -nostdlib -Wa,--dsp -Wall -Wextra -Os -ffunction-sections -fdata-sections -fstrict-volatile-bitfields -o CMakeFiles\\fxtxt.dir\\src\\font_cjk8.c.obj -c E:\\fxtxtviewer\\.tmp\\FxStudio-native\\853b8c0357c863eb238724f4\\source\\src\\font_cjk8.c",
+  "file": "E:\\fxtxtviewer\\.tmp\\FxStudio-native\\853b8c0357c863eb238724f4\\source\\src\\font_cjk8.c",
+  "output": "CMakeFiles\\fxtxt.dir\\src\\font_cjk8.c.obj"
+},
+{
+  "directory": "E:/fxtxtviewer/.tmp/FxStudio-native/853b8c0357c863eb238724f4/build",
+  "command": "E:\\fxtxtviewer\\ref\\pkg3\\FxStudio-0.2.0-win-x64\\sdk\\native\\bin\\sh-elf-gcc.exe -DFX9860G -DTARGET_FX9860G -O3 -DNDEBUG -mb -fno-builtin -nostdlib -Wa,--dsp -Wall -Wextra -Os -ffunction-sections -fdata-sections -fstrict-volatile-bitfields -o CMakeFiles\\fxtxt.dir\\src\\pinyin.c.obj -c E:\\fxtxtviewer\\.tmp\\FxStudio-native\\853b8c0357c863eb238724f4\\source\\src\\pinyin.c",
+  "file": "E:\\fxtxtviewer\\.tmp\\FxStudio-native\\853b8c0357c863eb238724f4\\source\\src\\pinyin.c",
+  "output": "CMakeFiles\\fxtxt.dir\\src\\pinyin.c.obj"
+},
+{
+  "directory": "E:/fxtxtviewer/.tmp/FxStudio-native/853b8c0357c863eb238724f4/build",
+  "command": "E:\\fxtxtviewer\\ref\\pkg3\\FxStudio-0.2.0-win-x64\\sdk\\native\\bin\\sh-elf-gcc.exe -DFX9860G -DTARGET_FX9860G -O3 -DNDEBUG -mb -fno-builtin -nostdlib -Wa,--dsp -Wall -Wextra -Os -ffunction-sections -fdata-sections -fstrict-volatile-bitfields -o CMakeFiles\\fxtxt.dir\\src\\icons.c.obj -c E:\\fxtxtviewer\\.tmp\\FxStudio-native\\853b8c0357c863eb238724f4\\source\\src\\icons.c",
+  "file": "E:\\fxtxtviewer\\.tmp\\FxStudio-native\\853b8c0357c863eb238724f4\\source\\src\\icons.c",
+  "output": "CMakeFiles\\fxtxt.dir\\src\\icons.c.obj"
+}
+]

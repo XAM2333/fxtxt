@@ -1,0 +1,188 @@
+[
+ {
+  "sequence": 1,
+  "timestamp": "2026-11-25T15:30:58.0493086+00:00",
+  "sessionId": null,
+  "kind": "operation.started",
+  "data": {
+   "operationId": "a13a84be0cd04caabdbb79fdd1d0a0c6",
+   "command": "session.open",
+   "version": 1
+  }
+ },
+ {
+  "sequence": 2,
+  "timestamp": "2026-11-25T15:30:58.0771225+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "session.opened",
+  "data": {
+   "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+   "name": "fxtxt",
+   "projectPath": "E:\\fxtxtviewer\\work\\fxtxt",
+   "sourceDirectory": "E:\\fxtxtviewer\\work\\fxtxt",
+   "buildDirectory": "E:\\fxtxtviewer\\work\\fxtxt\\.fxstudio\\build",
+   "sdkPath": "E:\\fxtxtviewer\\ref\\pkg3\\FxStudio-0.2.0-win-x64\\sdk\\native",
+   "state": "Open",
+   "revision": 1,
+   "busy": false,
+   "selectedFrame": 0,
+   "lastStop": null,
+   "artifact": null
+  }
+ },
+ {
+  "sequence": 3,
+  "timestamp": "2026-11-25T15:30:58.0789445+00:00",
+  "sessionId": null,
+  "kind": "operation.completed",
+  "data": {
+   "operationId": "a13a84be0cd04caabdbb79fdd1d0a0c6",
+   "status": "succeeded",
+   "error": null
+  }
+ },
+ {
+  "sequence": 4,
+  "timestamp": "2026-11-25T15:30:58.4529145+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "operation.started",
+  "data": {
+   "operationId": "93891bb9e2bf4e1ba95c45fa08c7d044",
+   "command": "build.run",
+   "version": 1
+  }
+ },
+ {
+  "sequence": 5,
+  "timestamp": "2026-11-25T15:30:58.4622366+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "debug.state",
+  "data": {
+   "state": "Building",
+   "revision": 3
+  }
+ },
+ {
+  "sequence": 6,
+  "timestamp": "2026-11-25T15:30:58.4763488+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "build.log",
+  "data": {
+   "text": "Building fxtxt (Release) using native Windows SDK"
+  }
+ },
+ {
+  "sequence": 7,
+  "timestamp": "2026-11-25T15:31:00.2921788+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "build.log",
+  "data": {
+   "text": "+ E:\\fxtxtviewer\\ref\\pkg3\\FxStudio-0.2.0-win-x64\\sdk\\native\\host\\cmake\\bin\\cmake.exe -S E:\\fxtxtviewer\\.tmp\\FxStudio-native\\03ef39c6e24c2864a1aca64d\\source -B E:\\fxtxtviewer\\.tmp\\FxStudio-native\\03ef39c6e24c2864a1aca64d\\build -G Ninja -DCMAKE_MAKE_PROGRAM=E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/host/ninja/ninja.exe -DCMAKE_TOOLCHAIN_FILE=E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/lib/cmake/fxsdk/FX9860G.cmake -DCMAKE_MODULE_PATH=E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/lib/cmake/fxsdk -DFXSDK_CMAKE_MODULE_PATH=E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/lib/cmake/fxsdk -DPython3_EXECUTABLE=E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/host/python/python.exe -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON -DCMAKE_C_COMPILER_LAUNCHER=E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/host/python/python.exe;E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/service/compiler-launcher.py -DCMAKE_CXX_COMPILER_LAUNCHER=E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/host/python/python.exe;E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/service/compiler-launcher.py -DCMAKE_C_LINKER_LAUNCHER=E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/host/python/python.exe;E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/service/compiler-launcher.py -DCMAKE_CXX_LINKER_LAUNCHER=E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/host/python/python.exe;E:/fxtxtviewer/ref/pkg3/FxStudio-0.2.0-win-x64/sdk/native/service/compiler-launcher.py"
+  }
+ },
+ {
+  "sequence": 8,
+  "timestamp": "2026-11-25T15:31:00.5423158+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "build.log",
+  "data": {
+   "text": "-- Configuring done (0.2s)"
+  }
+ },
+ {
+  "sequence": 9,
+  "timestamp": "2026-11-25T15:31:00.5890896+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "build.log",
+  "data": {
+   "text": "-- Generating done (0.0s)"
+  }
+ },
+ {
+  "sequence": 10,
+  "timestamp": "2026-11-25T15:31:00.5998613+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "build.log",
+  "data": {
+   "text": "-- Build files have been written to: E:/fxtxtviewer/.tmp/FxStudio-native/03ef39c6e24c2864a1aca64d/build"
+  }
+ },
+ {
+  "sequence": 11,
+  "timestamp": "2026-11-25T15:31:00.6113975+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "build.log",
+  "data": {
+   "text": "+ E:\\fxtxtviewer\\ref\\pkg3\\FxStudio-0.2.0-win-x64\\sdk\\native\\host\\cmake\\bin\\cmake.exe --build E:\\fxtxtviewer\\.tmp\\FxStudio-native\\03ef39c6e24c2864a1aca64d\\build --target fxtxt --parallel 6"
+  }
+ },
+ {
+  "sequence": 12,
+  "timestamp": "2026-11-25T15:31:02.9208633+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "build.log",
+  "data": {
+   "text": "[1/1] Linking C executable fxtxt"
+  }
+ },
+ {
+  "sequence": 13,
+  "timestamp": "2026-11-25T15:31:02.9939021+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "build.log",
+  "data": {
+   "text": "{\"schemaVersion\": 1, \"pathStyle\": \"windows\", \"elf\": \"E:\\\\fxtxtviewer\\\\work\\\\fxtxt\\\\.fxstudio\\\\build\\\\Release\\\\artifacts\\\\addin.elf\", \"g1a\": \"E:\\\\fxtxtviewer\\\\work\\\\fxtxt\\\\.fxstudio\\\\build\\\\Release\\\\artifacts\\\\addin.g1a\", \"sourceDirectory\": \"E:\\\\fxtxtviewer\\\\work\\\\fxtxt\", \"buildDirectory\": \"E:\\\\fxtxtviewer\\\\work\\\\fxtxt\\\\.fxstudio\\\\build\\\\Release\", \"cacheDirectory\": \"E:\\\\fxtxtviewer\\\\.tmp\\\\FxStudio-native\\\\03ef39c6e24c2864a1aca64d\", \"sourceMappings\": [{\"from\": \"E:/fxtxtviewer/.tmp/FxStudio-native/03ef39c6e24c2864a1aca64d/source\", \"to\": \"E:\\\\fxtxtviewer\\\\work\\\\fxtxt\"}], \"sha256\": {\"elf\": \"2b143a8d1e4f32d409e37cd982be9d455bbf8598d3bb06fbe6d4c7c43a275fa7\", \"g1a\": \"5ad708913a259b8406af8f432fa5ed21dce5a3a0881c239f7f89873c4fb69557\"}, \"configuration\": \"Release\", \"target\": \"fxtxt\", \"g1aBytes\": 152712, \"artifactPair\": {\"verified\": true, \"payloadBytes\": 152200, \"comparedBytes\": 152200, \"segments\": [{\"loadAddress\": 3146240, \"fileBytes\": 151816, \"payloadOffset\": 0}, {\"loadAddress\": 3298056, \"fileBytes\": 256, \"payloadOffset\": 151816}, {\"loadAddress\": 3298312, \"fileBytes\": 128, \"payloadOffset\": 152072}]}, \"debugFlagsForced\": false, \"hardwareVerified\": false, \"capabilities\": {\"cppExceptions\": false, \"cppThreads\": false}, \"toolchain\": \"Native fxSDK 2.11.0 / GCC 14.1.0 / gint 2.11.0\"}"
+  }
+ },
+ {
+  "sequence": 14,
+  "timestamp": "2026-11-25T15:31:03.0465832+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "build.log",
+  "data": {
+   "text": "G1A: E:\\fxtxtviewer\\work\\fxtxt\\.fxstudio\\build\\Release\\artifacts\\addin.g1a (152,712 bytes)"
+  }
+ },
+ {
+  "sequence": 15,
+  "timestamp": "2026-11-25T15:31:03.0474687+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "debug.state",
+  "data": {
+   "state": "Open",
+   "revision": 5
+  }
+ },
+ {
+  "sequence": 16,
+  "timestamp": "2026-11-25T15:31:03.0511152+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "build.completed",
+  "data": {
+   "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+   "revision": 5,
+   "artifact": {
+    "elfPath": "E:\\fxtxtviewer\\work\\fxtxt\\.fxstudio\\build\\Release\\artifacts\\addin.elf",
+    "g1APath": "E:\\fxtxtviewer\\work\\fxtxt\\.fxstudio\\build\\Release\\artifacts\\addin.g1a",
+    "manifestPath": "E:\\fxtxtviewer\\work\\fxtxt\\.fxstudio\\build\\Release\\artifact.json",
+    "configuration": "Release",
+    "elfSha256": "2b143a8d1e4f32d409e37cd982be9d455bbf8598d3bb06fbe6d4c7c43a275fa7",
+    "g1ASha256": "5ad708913a259b8406af8f432fa5ed21dce5a3a0881c239f7f89873c4fb69557",
+    "g1ABytes": 152712
+   },
+   "diagnostics": [],
+   "diagnosticsTruncated": false
+  }
+ },
+ {
+  "sequence": 17,
+  "timestamp": "2026-11-25T15:31:03.0522321+00:00",
+  "sessionId": "ee41bf58a5b548488d8f1506f2ccefdf",
+  "kind": "operation.completed",
+  "data": {
+   "operationId": "93891bb9e2bf4e1ba95c45fa08c7d044",
+   "status": "succeeded",
+   "error": null
+  }
+ }
+]

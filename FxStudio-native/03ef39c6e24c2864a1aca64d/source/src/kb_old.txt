@@ -1,0 +1,78 @@
+/*=== on-screen keyboard (dialog) ==========================================*/
+
+static char const *pages[] = {
+	"abcdefghijklmnopqrstuvwxyz .?!",
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZ ,'\"-",
+	"0123456789+-*/=<>()[]{}:;",
+	"#$%&@^_\\|~`\x7f",
+};
+
+static char kb_char(int row, int col)
+{
+	char const *p = pages[kb_page];
+	int n = (int)strlen(p);
+	int i = row * 6 + col;
+	return (i >= 0 && i < n) ? p[i] : 0;
+}
+
+static void text_insert(uint16_t cell)
+{
+	if (ncell >= TEXT_MAX) return;
+	int off = line_start(cur_line) + cur_col;
+	if (off > ncell) off = ncell;
+	memmove(cells + off + 1, cells + off, (ncell - off) * sizeof(uint16_t));
+	cells[off] = cell;
+	ncell++;
+	cur_col++;
+	dirty = 1;
+}
+
+static void text_backspace(void)
+{
+	int off = line_start(cur_line) + cur_col;
+	if (off <= 0 || ncell <= 0) return;
+	memmove(cells + off - 1, cells + off, (ncell - off) * sizeof(uint16_t));
+	ncell--;
+	if (cur_col > 0) cur_col--;
+	dirty = 1;
+}
+
+static void kb_type(char ch)
+{
+	if (kb_target == 1) {
+		if (kb_len < (int)sizeof(kb_buffer) - 1) {
+			kb_buffer[kb_len++] = ch;
+			kb_buffer[kb_len] = 0;
+		}
+		return;
+	}
+	text_insert((uint16_t)((unsigned char)ch - 0x20));
+}
+
+static void draw_keyboard(void)
+{
+	ui_title(kb_target == 1 ? "Search text" : "Insert character");
+
+	/* keyboard panel */
+	ui_box(2, CONTENT_Y + 1, 123, 43, NULL);
+	for (int r = 0; r < 5; r++) {
+		for (int c = 0; c < 6; c++) {
+			char ch = kb_char(r, c);
+			if (!ch) continue;
+			int x = 5 + c * 20, y = CONTENT_Y + 4 + r * 8;
+			if (r == kb_row && c == kb_col)
+				drect(x - 1, y - 1, x + 7, y + 7, C_BLACK);
+			uint16_t cell = (uint16_t)((unsigned char)ch - 0x20);
+			draw_cell(x, y, cell, (r == kb_row && c == kb_col) ? 1 : 0);
+		}
+	}
+
+	char st[24];
+	if (kb_target == 1)
+		snprintf(st, sizeof st, "%s_", kb_buffer);
+	else
+		snprintf(st, sizeof st, "F1 page F6 done");
+	ui_status(st);
+	dupdate();
+}
+

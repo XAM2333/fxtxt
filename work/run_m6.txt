@@ -1,0 +1,15 @@
+﻿CMD FAILED: E:\fxtxtviewer\ref\pkg3\FxStudio-0.2.0-win-x64\sdk\native\host\python\python.exe E:\fxtxtviewer\ref\skill\fxstudio\scripts\fxstudio.py --package E:\fxtxtviewer\ref\pkg3\FxStudio-0.2.0-win-x64 --state E:\fxtxtviewer\work\.fxstudio\state call session.open --args-file E:\fxtxtviewer\work\.fxstudio\state\args-2864-1.json --request-key k1795621303-1-2864
+{
+  "structuredContent": {
+    "contractVersion": "1.0",
+    "error": {
+      "code": "OPERATION_LIMIT",
+      "message": "This host retains 1024 operations plus 8 reserved close operations. Close sessions (or close stdin) and start a new host.",
+      "retryable": false
+    }
+  },
+  "isError": true
+}
+
+requestKey=k1795621303-1-2864
+

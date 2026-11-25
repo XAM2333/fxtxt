@@ -1,0 +1,207 @@
+/*=== pinyin input method ==================================================*/
+
+/* Find the syllable that starts with the current buffer (sorted table). */
+static int py_match(void)
+{
+	if (!py_len)
+		return -1;
+	int lo = 0, hi = PY_COUNT - 1;
+	while (lo <= hi) {
+		int mid = (lo + hi) / 2;
+		char const *name = py_names + py_off[mid];
+		int cmp = strncmp(name, py_buf, py_len);
+		if (cmp >= 0) {
+			if (!strncmp(name, py_buf, py_len))
+				return mid;
+			hi = mid - 1;
+		} else {
+			lo = mid + 1;
+		}
+	}
+	return -1;
+}
+
+static int py_candidates(void)
+{
+	if (py_syllable < 0)
+		return 0;
+	return py_start[py_syllable + 1] - py_start[py_syllable];
+}
+
+static uint16_t py_candidate(int i)
+{
+	int g = py_glyph[py_start[py_syllable] + i];
+	return (uint16_t)(CELL_CJK + g);
+}
+
+static void py_reset(void)
+{
+	py_len = 0;
+	py_buf[0] = 0;
+	py_syllable = -1;
+	py_pick = 0;
+}
+
+static void py_refresh(void)
+{
+	py_syllable = py_match();
+	py_pick = 0;
+}
+
+/*=== on-screen keyboard (dialog) ==========================================*/
+
+static char const *pages[] = {
+	"abcdefghijklmnopqrstuvwxyz .?!",
+	"ABCDEFGHIJKLMNOPQRSTUVWXYZ ,'\"-",
+	"0123456789+-*/=<>()[]{}:;",
+	"#$%&@^_\\|~`\x7f",
+};
+
+/* Grid geometry: pinyin uses 13x2 letters, the ASCII pages use 6x5. */
+static int kb_cols(void) { return kb_page == PAGE_PINYIN ? 13 : 6; }
+
+static char kb_char(int row, int col)
+{
+	if (kb_page == PAGE_PINYIN) {
+		int i = row * 13 + col;
+		return (i >= 0 && i < 26) ? (char)('a' + i) : 0;
+	}
+	char const *p = pages[kb_page - 1];
+	int n = (int)strlen(p);
+	int i = row * 6 + col;
+	return (i >= 0 && i < n) ? p[i] : 0;
+}
+
+static void text_insert(uint16_t cell)
+{
+	if (ncell >= TEXT_MAX)
+		return;
+	int off = line_start(cur_line) + cur_col;
+	if (off > ncell)
+		off = ncell;
+	memmove(cells + off + 1, cells + off, (ncell - off) * sizeof(uint16_t));
+	cells[off] = cell;
+	ncell++;
+	cur_col++;
+	dirty = 1;
+}
+
+static void text_backspace(void)
+{
+	int off = line_start(cur_line) + cur_col;
+	if (off <= 0 || ncell <= 0)
+		return;
+	memmove(cells + off - 1, cells + off, (ncell - off) * sizeof(uint16_t));
+	ncell--;
+	if (cur_col > 0)
+		cur_col--;
+	dirty = 1;
+}
+
+/* Append one cell to the current target (document or search prompt). */
+static void kb_put(uint16_t cell)
+{
+	if (kb_target == 1) {
+		if (kb_len < (int)(sizeof kb_cells / sizeof kb_cells[0]))
+			kb_cells[kb_len++] = cell;
+		return;
+	}
+	text_insert(cell);
+}
+
+static void kb_type(char ch)
+{
+	kb_put((uint16_t)((unsigned char)ch - 0x20));
+}
+
+static void kb_backspace(void)
+{
+	if (kb_target == 1) {
+		if (kb_len > 0)
+			kb_len--;
+		return;
+	}
+	text_backspace();
+}
+
+static void draw_keyboard(void)
+{
+	int pinyin = (kb_page == PAGE_PINYIN);
+	ui_title(pinyin ? (kb_target == 1 ? "Pinyin search" : "Pinyin input")
+	                : (kb_target == 1 ? "Search text" : "Insert character"));
+
+	int grid_y;
+	if (pinyin) {
+		/* input line */
+		char line[16];
+		if (py_len)
+			snprintf(line, sizeof line, "%s_", py_buf);
+		else
+			snprintf(line, sizeof line, "type pinyin");
+		draw_small(2, CONTENT_Y + 1, line, 0);
+
+		/* candidate row */
+		int ncand = py_candidates();
+		int y = CONTENT_Y + 11;
+		if (ncand > 0) {
+			int shown = ncand > 10 ? 10 : ncand;
+			int start = 0;
+			if (py_pick >= shown)
+				start = py_pick - shown + 1;
+			int x = 2;
+			for (int i = 0; i < shown; i++) {
+				int idx = start + i;
+				if (idx >= ncand || x + 10 > 126)
+					break;
+				if (idx == py_pick) {
+					drect(x - 1, y - 1, x + 9, y + 9, C_BLACK);
+					draw_cell(x + 1, y, py_candidate(idx), 1);
+				} else {
+					draw_cell(x + 1, y, py_candidate(idx), 0);
+				}
+				x += 11;
+			}
+		} else if (py_len) {
+			draw_small(2, y, "no match", 0);
+		}
+		grid_y = CONTENT_Y + 22;
+	} else {
+		grid_y = CONTENT_Y + 2;
+	}
+
+	int gc = kb_cols();
+	int gr = pinyin ? 2 : 5;
+	for (int r = 0; r < gr; r++) {
+		for (int c = 0; c < gc; c++) {
+			char ch = kb_char(r, c);
+			if (!ch)
+				continue;
+			int x = 3 + c * (pinyin ? 9 : 20);
+			int y = grid_y + r * 9;
+			if (y + 8 > STATUS_Y - 2)
+				continue;
+			int sel = (r == kb_row && c == kb_col);
+			if (sel)
+				drect(x - 1, y - 1, x + 8, y + 8, C_BLACK);
+			draw_cell(x, y, (uint16_t)((unsigned char)ch - 0x20), sel ? 1 : 0);
+		}
+	}
+
+	/* status: echo the search prompt, or key hints */
+	if (kb_target == 1) {
+		dhline(STATUS_Y - 1, C_BLACK);
+		int x = 2;
+		for (int i = 0; i < kb_len && x < 118; i++) {
+			draw_cell(x, STATUS_Y, kb_cells[i], 0);
+			x += cell_adv(kb_cells[i]);
+		}
+		for (int k = 0; k < 7; k++)
+			px_on(x + 1, STATUS_Y + k);
+	} else if (pinyin) {
+		ui_status(py_candidates() ? "F3/F4 pick  F5 insert" : "F1 page  F6 done");
+	} else {
+		ui_status("F1 pinyin  F6 done");
+	}
+	dupdate();
+}
+

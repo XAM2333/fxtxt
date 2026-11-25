@@ -1,0 +1,47 @@
+﻿session 4f436181207540aa99b0185150514586
+START chunk_rows+view_top+1=1
+OPEN chunk_rows+view_top+1=1
+STEP 1 DOWN 6
+STEP 2 DOWN 11
+STEP 3 DOWN 16
+STEP 4 DOWN 21
+STEP 5 DOWN 26
+STEP 6 DOWN 31
+STEP 7 DOWN 36
+STEP 8 DOWN 41
+STEP 9 DOWN 46
+STEP 10 DOWN 51
+STEP 11 DOWN 56
+STEP 12 DOWN 61
+STEP 13 DOWN 66
+STEP 14 DOWN 71
+STEP 15 DOWN 76
+debug.key failed {"code": "INVALID_ARGUMENT", "message": "Unknown argument: projectPath", "retryable": false}
+CMD FAILED: E:\fxtxtviewer\ref\pkg3\FxStudio-0.2.0-win-x64\sdk\native\host\python\python.exe E:\fxtxtviewer\ref\skill\fxstudio\scripts\fxstudio.py --package E:\fxtxtviewer\ref\pkg3\FxStudio-0.2.0-win-x64 --state E:\fxtxtviewer\work\.fxstudio\state call debug.pause --args-file E:\fxtxtviewer\work\.fxstudio\state\args.json --request-key k1795620936-91-13072
+{
+  "structuredContent": {
+    "contractVersion": "1.0",
+    "operation": {
+      "operationId": "bab9189f0015407492b5921cede93748",
+      "requestKey": "k1795620936-91-13072",
+      "command": "debug.pause",
+      "version": 1,
+      "sessionId": "10b739ee002b4303a5556ebb0985c1d6",
+      "status": "failed",
+      "cancelRequested": false,
+      "createdAt": "2026-11-25T15:35:36.8921518+00:00",
+      "startedAt": "2026-11-25T15:35:36.8921717+00:00",
+      "completedAt": "2026-11-25T15:35:36.8922565+00:00",
+      "result": null,
+      "error": {
+        "code": "INVALID_ARGUMENT",
+        "message": "Unknown argument: configuration",
+        "retryable": false
+      }
+    }
+  },
+  "isError": true
+}
+
+requestKey=k1795620936-91-13072
+
