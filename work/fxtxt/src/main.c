@@ -3916,6 +3916,7 @@ static void open_settings(void)
 	set_from = mode;
 	set_edit_was = edit_mode;
 	set_doc = (ncell > 0);
+	status_msg[0] = 0;
 	set_sel = 0;
 	mode = MODE_SET;
 }
@@ -3936,6 +3937,10 @@ static void settings_back(void)
 
 static void set_bar(char const *a, char const *b, char const *c, char const *f)
 {
+	/* a failed insert used to be invisible: nothing on the page shows
+	   status_msg, so say it here */
+	if (status_msg[0])
+		draw_ui(2, CONTENT_Y + 36, status_msg, 0);
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = 0;
 	box_lab[0] = a;
@@ -4061,9 +4066,26 @@ static void set_insert(uint16_t const *src, int n)
 		status_sticky = 1;
 		return;
 	}
+	{
+		/* from the reader there is no caret on screen, so the cell went to
+		   whatever position the last edit left behind (often line 0, far
+		   from the page being read).  Put it on the first cell of the
+		   visible page instead. */
+		if (!set_edit_was) {
+			cur_line = offset_to_line(row_start(view_top));
+			if (cur_line < 0 || cur_line > line_count() - 1)
+				cur_line = 0;
+			cur_col = 0;
+		}
+	}
 	for (int i = 0; i < n; i++)
 		text_insert(src[i]);
 	dirty = 1;
+	/* show the row that got the text */
+	{
+		int c = line_start(cur_line) + cur_col;
+		goto_row(chunk_rows + row_of_cell(c > ncell ? ncell : c));
+	}
 	snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xB2\xE5\xC8\xEB");
 	status_sticky = 1;
 	settings_back();
@@ -4390,17 +4412,23 @@ static void draw_book(void)
 	box_lab[1] = "\xB6\xC1\xC8\xA1";
 	box_lab[5] = "\xC9\xBE\xB3\xFD";
 	{
-		/* the row the page was opened on, instead of the path dump */
+		/* the page (or line) the reader was on, in the unit the counter
+		   uses -- bug: the slots used to be rows while the title said 行 */
 		char head[24];
-		snprintf(head, sizeof head, "\xCA\xE9\xC7\xA9\x20\xD0\xD0\x25\x64", book_line);
+		int here = set_unit_lines
+			? chunk_lines + offset_to_line(row_start(view_top)) + 1
+			: (chunk_rows + view_top) / rows() + 1;
+		snprintf(head, sizeof head, "\xCA\xE9\xC7\xA9\x20%s%d",
+		         set_unit_lines ? "\xD0\xD0" : "\xD2\xB3", here);
 		ui_title(head);
 	}
 	for (int i = 0; i < 6; i++) {
 		int col = i % 2, row = i / 2;
 		int p = book_v[i];
 		char line[24];
+		int v = p > 0 ? (set_unit_lines ? p : (p - 1) / rows() + 1) : 0;
 		if (p > 0)
-			snprintf(line, sizeof line, "%d:%d", i + 1, p);
+			snprintf(line, sizeof line, "%d:%d", i + 1, v);
 		else
 			snprintf(line, sizeof line, "%d:-", i + 1);
 		draw_ui(col ? 68 : 6, CONTENT_Y + row * 12, line, i == book_sel);
