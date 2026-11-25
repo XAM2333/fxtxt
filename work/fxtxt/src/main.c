@@ -2114,7 +2114,16 @@ static void handle_name_key(key_event_t ev)
 	}
 }
 
-/*=== windows ==============================================================
+/*=== 分页 ==================================================================
+   Two different things, easy to mix up:
+
+     分页 (window / chunk)  - the slice of the document that fits the text
+                              buffer; it is a memory limit, not a screen unit
+     页   (page)            - what the screen shows at once, rows() = 5 rows
+
+   Everything the user sees (page counter, bookmarks, history, search hits,
+   goto) is in document rows/lines, never in window-local ones.
+
    The document is larger than the text buffer, so it is read in windows of at
    most text_max bytes.  A window must not end in the middle of a screen page,
    otherwise the last rows of one window and the first rows of the next do not
