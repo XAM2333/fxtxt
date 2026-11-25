@@ -54,8 +54,18 @@ static int text_max = TEXT_MIN;
 
 enum { MODE_LIST = 0, MODE_VIEW, MODE_KEYB, MODE_HELP, MODE_NAME, MODE_SEARCH, MODE_CONFIRM, MODE_BOOK,
        MODE_GOTO,
+       MODE_SET, MODE_SET_INV, MODE_SET_UNIT, MODE_SET_IME, MODE_SET_CHARS, MODE_SET_PHR,
        };
 enum { PAGE_PINYIN = 0, PAGE_PUNCT, PAGE_LOWER, PAGE_UPPER, PAGE_DIGIT, PAGE_SYMBOL };
+
+/* settings: plain statics, so they survive a menu round trip exactly like
+   the bookmarks and the reading position do */
+static int set_inv;		/* 1 = inverse video */
+static int set_unit_lines;	/* 1 = the reader counter shows lines */
+static int set_from;		/* page the settings were opened from */
+static int set_edit_was;	/* edit mode when they were opened */
+static int set_sel;		/* cursor on the palette pages */
+static int set_doc;		/* a document is loaded, so insert works */
 #define PAGE_COUNT 6
 
 
@@ -166,6 +176,7 @@ static char ev_letter(key_event_t ev);
 static char alpha_letter(int key);
 static char key_ascii(int key);
 static void ui_status(char const *text);
+static void open_settings(void);
 static int py_candidates(void);
 static void py_reset(void);
 static void run_search(void);
@@ -195,13 +206,27 @@ static void px_off(int x, int y)
 /* One glyph pixel. With invert=0 only ink is painted: the frame is already
    white, and painting the blank part of a cell would erase the rightmost
    column of the previous glyph (proportional advance is narrower than the
-   cell). With invert=1 the cell is painted white-on-black. */
+   cell). With invert=1 the cell is painted white-on-black.  ui_inv flips
+   both, which is all the inverse-video setting does. */
+static int ui_inv;		/* 1 = black paper, white ink */
+#define INKBAR (ui_inv ? C_WHITE : C_BLACK)
+#define PAPER  (ui_inv ? C_BLACK : C_WHITE)
+
 static void put_px(int x, int y, int on, int invert)
 {
 	if (!on)
 		return;			/* never paint the cell background */
-	if (invert)
-		px_off(x, y);		/* white ink on the already-black bar */
+	if (invert ^ ui_inv)
+		px_off(x, y);		/* white ink on the black bar */
+	else
+		px_on(x, y);
+}
+
+/* solid blocks (carets, selection boxes) are ink as well */
+static void ink(int x, int y)
+{
+	if (ui_inv)
+		px_off(x, y);
 	else
 		px_on(x, y);
 }
@@ -229,7 +254,7 @@ static void draw_cell(int x, int y, uint16_t cell, int invert)
 			   so a wide left bearing cannot eat the previous column */
 			for (int r = 0; r < 8; r++)
 				for (int c = 0; c < font_adv8[i]; c++)
-					px_on(x + c, y + r);
+					ink(x + c, y + r);
 		}
 		blit8(x - font_lb8[i], y, font_ascii8[i], invert);
 		return;
@@ -353,7 +378,7 @@ static char const *hint_edit_en = "\xD3\xA2 F1\xB4\xE6 F3\xCD\xCB F4\xB1\xEA F5\
 static void ui_badge(char ch)
 {
 	int x = 118, y = STATUS_Y;
-	drect(x, y, x + 9, y + 7, C_BLACK);
+	drect(x, y, x + 9, y + 7, INKBAR);
 	draw_cell(x + 1, y, (uint16_t)((unsigned char)ch - 0x20), 1);
 }
 
@@ -392,10 +417,10 @@ static int help_page;	/* which help page is shown, 0..3 */
    one carries its own short label. */
 static void ui_fkeys(void)
 {
-	drect(0, BOX_Y, 127, BOX_Y, C_BLACK);          /* top edge */
+	drect(0, BOX_Y, 127, BOX_Y, INKBAR);          /* top edge */
 	for (int i = 1; i < 6; i++) {
 		int x = i * 21;
-		drect(x, BOX_Y, x, 63, C_BLACK);          /* dividers to the bottom */
+		drect(x, BOX_Y, x, 63, INKBAR);          /* dividers to the bottom */
 	}
 	for (int i = 0; i < 6; i++) {
 		char const *s = box_lab[i];
@@ -413,7 +438,7 @@ static void ui_fkeys(void)
 /* 9x9 box in the title bar: white letter on black (inverse of the bar). */
 static void ui_topbox(int x, char ch)
 {
-	drect(x, 0, x + 8, 8, C_WHITE);
+	drect(x, 0, x + 8, 8, PAPER);
 	draw_cell(x + 1, 1, (uint16_t)((unsigned char)ch - 0x20), 0);
 }
 
@@ -429,25 +454,25 @@ static void ui_top_state(int show_input)
 	if (shift_armed) {
 		/* SHIFT wins: it switches to capitals for the next key, so the
 		   letter lock is not shown at the same time. */
-		drect(x - 8, 0, x, 8, C_WHITE);
+		drect(x - 8, 0, x, 8, PAPER);
 		draw_cell(x - 7, 1, (uint16_t)('S' - 0x20), 0);
 		x -= 10;
 	} else if (alpha_lock || alpha_armed) {
-		drect(x - 8, 0, x, 8, C_WHITE);
+		drect(x - 8, 0, x, 8, PAPER);
 		draw_cell(x - 7, 1, (uint16_t)('A' - 0x20), 0);
 		x -= 10;
 	}
 
 	{
 		int g = cn_mode ? 5029 : 4701;	/* 中 / 英 */
-		drect(x - 8, 0, x, 8, C_WHITE);
+		drect(x - 8, 0, x, 8, PAPER);
 		draw_cell(x - 7, 1, (uint16_t)(CELL_CJK + g), 0);
 		x -= 10;
 	}
 	{
 		/* 大写 / 小写: F6 and SHIFT both act as a case lock */
 		int g = caps_on ? 1868 : 4418;
-		drect(x - 16, 0, x, 8, C_WHITE);
+		drect(x - 16, 0, x, 8, PAPER);
 		draw_cell(x - 15, 1, (uint16_t)(CELL_CJK + g), 0);
 		draw_cell(x - 7, 1, (uint16_t)(CELL_CJK + 4437), 0);
 	}
@@ -455,7 +480,7 @@ static void ui_top_state(int show_input)
 
 static void ui_title_state(char const *text, int show_input)
 {
-	drect(0, 0, 127, TITLE_H - 1, C_BLACK);
+	drect(0, 0, 127, TITLE_H - 1, INKBAR);
 	/* Stop the title before whatever occupies the right end: the state
 	   boxes when editing, otherwise the page counter.  Both are measured
 	   from fixed budgets because the caller builds the counter string
@@ -536,7 +561,7 @@ static void blit_icon(unsigned char const *rows, int w, int h, int x, int y,
 				if (invert)
 					px_off(x + c, y + r);
 				else
-					px_on(x + c, y + r);
+					ink(x + c, y + r);
 			}
 	}
 }
@@ -1976,7 +2001,7 @@ static void draw_name(void)
 		snprintf(rest, sizeof rest, "%s", name_buf + n);
 		int x = draw_ui(28, y, head, 0);
 		for (int k = 0; k < 7; k++)
-			px_on(x + 1, y + k);
+			ink(x + 1, y + k);
 		draw_ui(x + 3, y, rest, 0);
 	}
 	y += 10;
@@ -2768,7 +2793,7 @@ static void draw_list(void)
 	{
 		for (int i = 0; i < 5; i++)
 			box_lab[i] = lab_list[i];
-		box_lab[5] = "\xB0\xEF\xD6\xFA";
+		box_lab[5] = "\xC9\xE8\xD6\xC3";
 	}
 
 	int y = CONTENT_Y;
@@ -2784,7 +2809,7 @@ static void draw_list(void)
 				break;
 			int sel = (idx == rec_sel);
 			if (sel)
-				drect(0, y - 1, TEXT_W - 1, y + 7, C_BLACK);
+				drect(0, y - 1, TEXT_W - 1, y + 7, INKBAR);
 			char const *p = rec_at(idx);
 			char const *nm = strrchr(p, '/');
 			icon_file(1, y, sel);
@@ -2800,7 +2825,7 @@ static void draw_list(void)
 			break;
 		int sel = (idx == list_sel);
 		if (sel)
-			drect(0, y - 1, TEXT_W - 1, y + 7, C_BLACK);
+			drect(0, y - 1, TEXT_W - 1, y + 7, INKBAR);
 		if (is_dir[idx])
 			icon_folder(1, y, sel);
 		else
@@ -2839,21 +2864,22 @@ enum {
 	A_NONE = 0,
 	A_EDIT, A_FIND, A_BOOK, A_HELP,			/* reading page */
 	A_HIT_PREV, A_HIT_NEXT, A_HIT_QUERY, A_HIT_CLOSE,	/* result list */
-	A_SAVE, A_LEAVE, A_CAPS, A_PUNCT, A_CN, A_PAGE, A_UNDO, A_GOTO
+	A_SAVE, A_LEAVE, A_CAPS, A_PUNCT, A_CN, A_PAGE, A_UNDO, A_GOTO,
+	A_SET
 };
 
 static unsigned char const fk_act[FS_N][6] = {
-	{ A_EDIT,     A_FIND,     A_NONE,      A_GOTO,  A_BOOK,      A_HELP },
+	{ A_EDIT,     A_FIND,     A_NONE,      A_GOTO,  A_BOOK,      A_SET },
 	{ A_HIT_PREV, A_HIT_NEXT, A_HIT_QUERY, A_NONE,  A_HIT_CLOSE, A_HELP },
 	{ A_SAVE,     A_LEAVE,    A_CAPS,      A_PUNCT, A_CN,        A_PAGE },
-	{ A_UNDO,     A_FIND,     A_GOTO,      A_NONE,  A_HELP,      A_PAGE },
+	{ A_UNDO,     A_FIND,     A_GOTO,      A_NONE,  A_SET,       A_PAGE },
 };
 
 static char const *fk_lab[FS_N][6] = {
-	{ "\xB1\xE0\xBC\xAD", "\xB2\xE9\xD5\xD2", 0, "\xCC\xF8\xD7\xAA", "\xCA\xE9\xC7\xA9", "\xB0\xEF\xD6\xFA" },
+	{ "\xB1\xE0\xBC\xAD", "\xB2\xE9\xD5\xD2", 0, "\xCC\xF8\xD7\xAA", "\xCA\xE9\xC7\xA9", "\xC9\xE8\xD6\xC3" },
 	{ "\xC9\xCF\xCC\xF5", "\xCF\xC2\xCC\xF5", "\xD4\xD9\xB2\xE9", 0, "\xCD\xCB\xB3\xF6", "\xB0\xEF\xD6\xFA" },
 	{ "\xB1\xA3\xB4\xE6", "\xCD\xCB\xB3\xF6", "\xB4\xF3\xD0\xB4", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB7\xAD\xD2\xB3" },
-	{ "\xB3\xB7\xCF\xFA", "\xB2\xE9\xD5\xD2", "\xCC\xF8\xD7\xAA", 0, "\xB0\xEF\xD6\xFA", "\xB7\xAD\xD2\xB3" },
+	{ "\xB3\xB7\xCF\xFA", "\xB2\xE9\xD5\xD2", "\xCC\xF8\xD7\xAA", 0, "\xC9\xE8\xD6\xC3", "\xB7\xAD\xD2\xB3" },
 };
 
 static int fk_state(void)
@@ -2867,7 +2893,7 @@ static int fk_state(void)
 /* Inline pinyin composition: buffer + candidate row on the status line. */
 static void comp_draw(void)
 {
-	dhline(STATUS_Y - 1, C_BLACK);
+	dhline(STATUS_Y - 1, INKBAR);
 	draw_small(2, STATUS_Y, py_buf, 0);
 	int x = 2;
 	for (char const *p = py_buf; *p; p++)
@@ -2891,7 +2917,7 @@ static void comp_draw(void)
 		if (idx >= n || x + 9 > 127)
 			break;
 		if (idx == py_pick) {
-			drect(x - 1, STATUS_Y - 1, x + 8, STATUS_Y + 7, C_BLACK);
+			drect(x - 1, STATUS_Y - 1, x + 8, STATUS_Y + 7, INKBAR);
 			draw_cell(x, STATUS_Y, py_candidate(idx), 1);
 		} else {
 			draw_cell(x, STATUS_Y, py_candidate(idx), 0);
@@ -2919,7 +2945,15 @@ static void draw_view(void)
 	if (!edit_mode) {
 		if (search_n > 0)
 			snprintf(info, sizeof info, "%d/%d", search_cur + 1, search_n);
-		else {
+		else if (set_unit_lines) {
+			/* line numbers instead of pages */
+			int ln = chunk_lines + offset_to_line(row_start(view_top)) + 1;
+			int tl = total_lines;
+			if (tl < 1) tl = 1;
+			if (ln < 1) ln = 1;
+			if (ln > tl) ln = tl;
+			snprintf(info, sizeof info, "%d/%d", ln, tl);
+		} else {
 			int pg = (chunk_rows + view_top) / rows() + 1;
 			int tp = (total_rows + rows() - 1) / rows();
 			if (tp < 1) tp = 1;
@@ -2978,7 +3012,7 @@ static void draw_view(void)
 	/* the caret blinks: while the phase is off the cell stays empty */
 	if (caret_x >= 0 && blink_on) {
 		for (int k = 0; k < lh() - 1; k++)
-			px_on(caret_x, caret_y + k);
+			ink(caret_x, caret_y + k);
 	}
 
 	if (edit_mode && py_len > 0) {
@@ -3328,7 +3362,7 @@ static void draw_search(void)
 		x += cell_adv(search_cells[i]);
 	}
 	for (int k = 0; k < 7; k++)
-		px_on(x + 1, y + k);
+		ink(x + 1, y + k);
 
 	y += 10;
 	draw_small(2, y, py_buf, 0);
@@ -3344,7 +3378,7 @@ static void draw_search(void)
 			if (idx >= n || cx + 9 > 127)
 				break;
 			if (idx == py_pick) {
-				drect(cx - 1, y - 1, cx + 8, y + 7, C_BLACK);
+				drect(cx - 1, y - 1, cx + 8, y + 7, INKBAR);
 				draw_cell(cx, y, py_candidate(idx), 1);
 			} else {
 				draw_cell(cx, y, py_candidate(idx), 0);
@@ -3695,7 +3729,7 @@ static void draw_keyboard(void)
 				if (idx >= ncand || x + 10 > 126)
 					break;
 				if (idx == py_pick) {
-					drect(x - 1, y - 1, x + 9, y + 9, C_BLACK);
+					drect(x - 1, y - 1, x + 9, y + 9, INKBAR);
 					draw_cell(x + 1, y, py_candidate(idx), 1);
 				} else {
 					draw_cell(x + 1, y, py_candidate(idx), 0);
@@ -3726,7 +3760,7 @@ static void draw_keyboard(void)
 				continue;
 			int sel = (r == kb_row && c == kb_col);
 			if (sel)
-				drect(x - 1, y - 1, x + 8, y + 8, C_BLACK);
+				drect(x - 1, y - 1, x + 8, y + 8, INKBAR);
 			draw_cell(x, y, pcell ? pcell : (uint16_t)((unsigned char)ch - 0x20),
 			          sel ? 1 : 0);
 		}
@@ -3734,14 +3768,14 @@ static void draw_keyboard(void)
 
 	/* status: echo the search prompt, or key hints */
 	if (kb_target == 1) {
-		dhline(STATUS_Y - 1, C_BLACK);
+		dhline(STATUS_Y - 1, INKBAR);
 		int x = 2;
 		for (int i = 0; i < kb_len && x < 118; i++) {
 			draw_cell(x, STATUS_Y, kb_cells[i], 0);
 			x += cell_adv(kb_cells[i]);
 		}
 		for (int k = 0; k < 7; k++)
-			px_on(x + 1, STATUS_Y + k);
+			ink(x + 1, STATUS_Y + k);
 	} else if (pinyin) {
 		ui_status(py_candidates() ? "F3/F4 \xD1\xA1\xD7\xD6   F5 \xC9\xCF\xC6\xC1" : "F1 \xBB\xBB\xD2\xB3   F6 \xCD\xEA\xB3\xC9");
 	} else if (punct) {
@@ -3770,20 +3804,20 @@ static void draw_help(void)
 	static char const *page1[] = {
 		"\xC9\xCF\xCF\xC2\xBC\xFC\x20\xD1\xA1\xD4\xF1\x20\x20\x20\x45\x58\x45\x20\xB4\xF2\xBF\xAA",
 		"\x46\x31\x20\xD0\xC2\xBD\xA8\x20\x20\x20\x46\x32\x20\xB8\xC4\xC3\xFB",
-		"\x44\x45\x4C\x20\xC9\xBE\xB3\xFD\x20\x20\x20\x46\x36\x20\xB0\xEF\xD6\xFA",
+		"\x44\x45\x4C\x20\xC9\xBE\xB3\xFD\x20\x20\x20\x46\x36\x20\xC9\xE8\xD6\xC3",
 		"\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8\xC9\xCF\xBC\xB6",
 	};
 	static char const *page2[] = {
 		"\xC9\xCF\xCF\xC2\xBC\xFC\x20\xB7\xAD\xD2\xB3\x20\x20\x20\x45\x58\x45\x20\xB0\xEF\xD6\xFA",
 		"\x46\x31\x20\xB1\xE0\xBC\xAD\x20\x20\x20\x46\x32\x20\xB2\xE9\xD5\xD2",
 		"\x46\x34\x20\xCC\xF8\xD7\xAA\x20\x20\x20\x46\x35\x20\xCA\xE9\xC7\xA9",
-		"\x46\x36\x20\xB0\xEF\xD6\xFA\x20\x20\x20\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8",
+		"\x46\x36\x20\xC9\xE8\xD6\xC3\x20\x20\x20\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8",
 	};
 	static char const *page3[] = {
 		"\x46\x31\x20\xB1\xA3\xB4\xE6\x20\x20\x20\x46\x32\x20\xCD\xCB\xB3\xF6",
 		"\x46\x33\x20\xB4\xF3\xD0\xB4\x20\x20\x20\x46\x34\x20\xB1\xEA\xB5\xE3",
 		"\x46\x35\x20\xD6\xD0\xD3\xA2\x20\x20\x20\x46\x36\x20\xB7\xAD\xD2\xB3",
-		"\xB6\xFE\xD2\xB3\x20\x46\x33\x20\xCC\xF8\xD7\xAA\x20\x45\x58\x45\x20\xBB\xBB\xD0\xD0",
+		"\xB6\xFE\xD2\xB3\x20\x46\x35\x20\xC9\xE8\xD6\xC3\x20\x20\x45\x58\x45\x20\xBB\xBB\xD0\xD0",
 	};
 	static char const *page4[] = {
 		"\x46\x31\x20\xCB\xD1\xCB\xF7\x20\x20\x20\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8",
@@ -3791,8 +3825,14 @@ static void draw_help(void)
 		"\x46\x36\x20\xB0\xEF\xD6\xFA\x20\x20\x20\xC9\xCF\xCF\xC2\xBC\xFC\x20\xBB\xBB\xC3\xFC\xD6\xD0",
 		"\xBD\xE1\xB9\xFB\xD2\xB3\x20\x46\x35\x20\xCD\xCB\xB3\xF6\xBD\xE1\xB9\xFB",
 	};
-	static char const *titles[] = { "\xC1\xD0\xB1\xED\xD2\xB3", "\xD4\xC4\xB6\xC1\xD2\xB3", "\xB1\xE0\xBC\xAD\xD2\xB3", "\xB2\xE9\xD5\xD2\xD2\xB3" };
-	char const **pages[4];
+	static char const *page5[] = {
+		"\x46\x31\x20\xB7\xB4\xC9\xAB\x20\x20\x20\x46\x32\x20\xCA\xE4\xC8\xEB\xB7\xA8",
+		"\x46\x33\x20\xBC\xC6\xCA\xFD\x20\x20\x20\x46\x36\x20\xB0\xEF\xD6\xFA",
+		"\xB7\xB4\xC9\xAB\xD2\xB3\x20\x46\x31\x20\xB9\xD8\x20\x20\x46\x32\x20\xBF\xAA",
+		"\xBC\xC6\xCA\xFD\xD2\xB3\x20\x46\x31\x20\xD2\xB3\x20\x20\x46\x32\x20\xD0\xD0",
+	};
+	static char const *titles[] = { "\xC1\xD0\xB1\xED\xD2\xB3", "\xD4\xC4\xB6\xC1\xD2\xB3", "\xB1\xE0\xBC\xAD\xD2\xB3", "\xB2\xE9\xD5\xD2\xD2\xB3", "\xC9\xE8\xD6\xC3\xD2\xB3" };
+	char const **pages[5];
 	char head[32];
 	int y;
 
@@ -3800,9 +3840,10 @@ static void draw_help(void)
 	pages[1] = page2;
 	pages[2] = page3;
 	pages[3] = page4;
-	if (help_page < 0 || help_page > 3)
+	pages[4] = page5;
+	if (help_page < 0 || help_page > 4)
 		help_page = 0;
-	snprintf(head, sizeof head, "\xB0\xEF\xD6\xFA\x20\x25\x64\x2F\x34", help_page + 1);
+	snprintf(head, sizeof head, "\xB0\xEF\xD6\xFA\x20\x25\x64\x2F\x35", help_page + 1);
 	ui_title(head);
 	draw_ui(2, CONTENT_Y, titles[help_page], 0);
 	y = CONTENT_Y + 9;
@@ -3815,6 +3856,300 @@ static void draw_help(void)
 	}
 	ui_hints("", "", 0);
 	dupdate();
+}
+
+
+/*=== settings =============================================================
+   Three items, each on its own page; on those pages the F keys pick the
+   value, exactly as the F bar says.  The values are plain statics: gint keeps
+   the image resident, so they survive a menu round trip (writing them to
+   \fls0 is what used to make the main menu drop the add-in list). */
+
+static char const *const set_char_gb = "\xB5\xC4\xD2\xBB\xCA\xC7\xB2\xBB\xC1\xCB\xD4\xDA\xC8\xCB\xD3\xD0\xCE\xD2\xCB\xFB\xD5\xE2";
+
+static char const *const set_phr_gb[] = {
+	"\xC4\xFA\xBA\xC3", "\xD0\xBB\xD0\xBB", "\xC7\xEB\xC9\xD4\xB5\xC8", "\xCA\xD5\xB5\xBD",
+};
+#define SET_PHR_N 4
+
+static uint16_t set_chars[24];
+static int set_char_n;
+
+/* GB2312 bytes -> display cells, the same mapping the font tables use */
+static int gb_cells(char const *s, uint16_t *out, int cap)
+{
+	int n = 0;
+	unsigned char const *p = (unsigned char const *)s;
+	while (*p && n < cap) {
+		if (*p < 0x80) {
+			if (*p > 0x20)
+				out[n++] = (uint16_t)(*p - 0x20);
+			p++;
+		} else if (p[1]) {
+			int g = (p[0] - 0xA1) * 94 + (p[1] - 0xA1);
+			out[n++] = (uint16_t)(CELL_CJK + g);
+			p += 2;
+		} else {
+			break;
+		}
+	}
+	return n;
+}
+
+static void set_defaults(void)
+{
+	set_char_n = gb_cells(set_char_gb, set_chars,
+	                      (int)(sizeof set_chars / sizeof set_chars[0]));
+}
+
+static void open_settings(void)
+{
+	set_from = mode;
+	set_edit_was = edit_mode;
+	set_doc = (ncell > 0);
+	set_sel = 0;
+	mode = MODE_SET;
+}
+
+static void settings_back(void)
+{
+	if (set_from == MODE_VIEW && set_doc) {
+		mode = MODE_VIEW;
+		edit_mode = set_edit_was;
+		if (!edit_mode)
+			py_reset();
+		return;
+	}
+	mode = MODE_LIST;
+	edit_mode = 0;
+	fbar_page = 0;
+}
+
+static void set_bar(char const *a, char const *b, char const *c, char const *f)
+{
+	for (int i = 0; i < 6; i++)
+		box_lab[i] = 0;
+	box_lab[0] = a;
+	box_lab[1] = b;
+	box_lab[2] = c;
+	box_lab[5] = f;
+}
+
+static void draw_set(void)
+{
+	char line[64];
+	ui_clip_x = 128;
+	ui_no_cups = 0;
+	ui_info_right = 0;
+	set_bar("\xB7\xB4\xC9\xAB", "\xCA\xE4\xC8\xEB", "\xBC\xC6\xCA\xFD", "\xB0\xEF\xD6\xFA");
+	ui_title("\xC9\xE8\xD6\xC3");
+	draw_ui(2, CONTENT_Y + 1, "\x46\x31\x2D\x46\x33\x20\xD1\xA1\xD4\xF1\xCF\xEE\xC4\xBF", 0);
+	snprintf(line, sizeof line, "\xB7\xB4\xC9\xAB  %s", set_inv ? "\xBF\xAA" : "\xB9\xD8");
+	draw_ui(2, CONTENT_Y + 12, line, 0);
+	snprintf(line, sizeof line, "\xBC\xC6\xCA\xFD  %s", set_unit_lines ? "\xD0\xD0" : "\xD2\xB3");
+	draw_ui(2, CONTENT_Y + 22, line, 0);
+	draw_ui(2, CONTENT_Y + 33, "\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8", 0);
+	ui_hints("", "", 0);
+	dupdate();
+}
+
+static void draw_set_inv(void)
+{
+	ui_clip_x = 128;
+	ui_no_cups = 0;
+	ui_info_right = 0;
+	set_bar("\xB9\xD8", "\xBF\xAA", 0, "\xB0\xEF\xD6\xFA");
+	ui_title("\xCF\xD4\xCA\xBE\xB7\xB4\xC9\xAB");
+	draw_ui(2, CONTENT_Y + 1, "\xCF\xD4\xCA\xBE\xB7\xB4\xC9\xAB", 0);
+	draw_ui(2, CONTENT_Y + 13, set_inv ? "\xB5\xB1\xC7\xB0\x20\xBF\xAA" : "\xB5\xB1\xC7\xB0\x20\xB9\xD8", 0);
+	draw_ui(2, CONTENT_Y + 30, "\x46\x31\x20\xB9\xD8\x20\x20\x20\x46\x32\x20\xBF\xAA", 0);
+	ui_hints("", "", 0);
+	dupdate();
+}
+
+static void draw_set_unit(void)
+{
+	ui_clip_x = 128;
+	ui_no_cups = 0;
+	ui_info_right = 0;
+	set_bar("\xD2\xB3", "\xD0\xD0", 0, "\xB0\xEF\xD6\xFA");
+	ui_title("\xBC\xC6\xCA\xFD\xB5\xA5\xCE\xBB");
+	draw_ui(2, CONTENT_Y + 1, "\xD4\xC4\xB6\xC1\xD2\xB3\xBC\xC6\xCA\xFD", 0);
+	draw_ui(2, CONTENT_Y + 13, set_unit_lines ? "\xB5\xB1\xC7\xB0\x20\xD0\xD0" : "\xB5\xB1\xC7\xB0\x20\xD2\xB3", 0);
+	draw_ui(2, CONTENT_Y + 30, "\x46\x31\x20\xD2\xB3\x20\x20\x20\x46\x32\x20\xD0\xD0", 0);
+	ui_hints("", "", 0);
+	dupdate();
+}
+
+static void draw_set_ime(void)
+{
+	char line[64];
+	ui_clip_x = 128;
+	ui_no_cups = 0;
+	ui_info_right = 0;
+	set_bar("\xB3\xA3\xD3\xC3\xD7\xD6", "\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF", 0, "\xB0\xEF\xD6\xFA");
+	ui_title("\xCA\xE4\xC8\xEB\xB7\xA8");
+	snprintf(line, sizeof line, "\xB3\xA3\xD3\xC3\xD7\xD6  %d", set_char_n);
+	draw_ui(2, CONTENT_Y + 1, line, 0);
+	snprintf(line, sizeof line, "\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF  %d", SET_PHR_N);
+	draw_ui(2, CONTENT_Y + 12, line, 0);
+	draw_ui(2, CONTENT_Y + 30, "\x46\x31\x20\xB3\xA3\xD3\xC3\xD7\xD6\x20\x20\x46\x32\x20\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF", 0);
+	ui_hints("", "", 0);
+	dupdate();
+}
+
+static void draw_set_chars(void)
+{
+	ui_clip_x = 128;
+	ui_no_cups = 0;
+	ui_info_right = 0;
+	set_bar("\xB2\xE5\xC8\xEB", "\xC9\xBE\xB3\xFD", 0, "\xB0\xEF\xD6\xFA");
+	ui_title("\xB3\xA3\xD3\xC3\xD7\xD6");
+	for (int i = 0; i < set_char_n && i < 24; i++) {
+		int cx = 3 + (i % 8) * 15;
+		int cy = CONTENT_Y + 2 + (i / 8) * 13;
+		if (i == set_sel) {
+			drect(cx - 1, cy - 1, cx + 9, cy + 8, INKBAR);
+			draw_cell(cx + 1, cy, set_chars[i], 1);
+		} else {
+			draw_cell(cx + 1, cy, set_chars[i], 0);
+		}
+	}
+	if (set_char_n == 0)
+		draw_ui(2, CONTENT_Y + 2, "\x28\xBF\xD5\x29", 0);
+	ui_hints("", "", 0);
+	dupdate();
+}
+
+static void draw_set_phr(void)
+{
+	uint16_t buf[24];
+	ui_clip_x = 128;
+	ui_no_cups = 0;
+	ui_info_right = 0;
+	set_bar("\xB2\xE5\xC8\xEB", "\xC9\xBE\xB3\xFD", 0, "\xB0\xEF\xD6\xFA");
+	ui_title("\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF");
+	for (int i = 0; i < SET_PHR_N; i++) {
+		int y = CONTENT_Y + 1 + i * 10;
+		int n = gb_cells(set_phr_gb[i], buf, 24);
+		if (i == set_sel)
+			drect(0, y - 1, TEXT_W - 1, y + 7, INKBAR);
+		int x = 3;
+		for (int k = 0; k < n; k++) {
+			draw_cell(x, y, buf[k], i == set_sel);
+			x += cell_adv(buf[k]);
+		}
+	}
+	ui_hints("", "", 0);
+	dupdate();
+}
+
+/* put one cell, or a whole phrase, into the document at the caret */
+static void set_insert(uint16_t const *src, int n)
+{
+	if (!set_doc || ncell == 0 || n <= 0) {
+		snprintf(status_msg, sizeof status_msg, "\xC3\xBB\xD3\xD0\xB4\xF2\xBF\xAA\xB5\xC4\xCE\xC4\xB5\xB5");
+		status_sticky = 1;
+		return;
+	}
+	for (int i = 0; i < n; i++)
+		text_insert(src[i]);
+	dirty = 1;
+	snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xB2\xE5\xC8\xEB");
+	status_sticky = 1;
+	settings_back();
+}
+
+static void handle_set_key(key_event_t ev)
+{
+	if (ev.key == KEY_EXIT) {
+		if (mode == MODE_SET)
+			settings_back();
+		else
+			mode = MODE_SET;
+		return;
+	}
+	if (ev.key == KEY_F6) {
+		help_page = 4;		/* the settings page of the help */
+		help_back = mode;
+		mode = MODE_HELP;
+		return;
+	}
+	if (mode == MODE_SET) {
+		if (ev.key == KEY_F1)
+			mode = MODE_SET_INV;
+		else if (ev.key == KEY_F2)
+			mode = MODE_SET_IME;
+		else if (ev.key == KEY_F3)
+			mode = MODE_SET_UNIT;
+		return;
+	}
+	if (mode == MODE_SET_INV) {
+		if (ev.key == KEY_F1)
+			set_inv = 0, ui_inv = 0;
+		else if (ev.key == KEY_F2)
+			set_inv = 1, ui_inv = 1;
+		return;
+	}
+	if (mode == MODE_SET_UNIT) {
+		if (ev.key == KEY_F1)
+			set_unit_lines = 0;
+		else if (ev.key == KEY_F2)
+			set_unit_lines = 1;
+		return;
+	}
+	if (mode == MODE_SET_IME) {
+		if (ev.key == KEY_F1) {
+			set_sel = 0;
+			mode = MODE_SET_CHARS;
+		} else if (ev.key == KEY_F2) {
+			set_sel = 0;
+			mode = MODE_SET_PHR;
+		}
+		return;
+	}
+	if (mode == MODE_SET_CHARS) {
+		int cols = 8;
+		if (ev.key == KEY_LEFT) {
+			if (set_sel > 0)
+				set_sel--;
+		} else if (ev.key == KEY_RIGHT) {
+			if (set_sel < set_char_n - 1)
+				set_sel++;
+		} else if (ev.key == KEY_UP) {
+			if (set_sel >= cols)
+				set_sel -= cols;
+		} else if (ev.key == KEY_DOWN) {
+			if (set_sel + cols < set_char_n)
+				set_sel += cols;
+		} else if (ev.key == KEY_EXE || ev.key == KEY_F1) {
+			if (set_char_n > 0)
+				set_insert(&set_chars[set_sel], 1);
+		} else if (ev.key == KEY_F2) {
+			if (set_char_n > 0) {
+				for (int i = set_sel; i + 1 < set_char_n; i++)
+					set_chars[i] = set_chars[i + 1];
+				set_char_n--;
+				if (set_sel >= set_char_n && set_sel > 0)
+					set_sel--;
+			}
+		}
+		return;
+	}
+	if (mode == MODE_SET_PHR) {
+		if (ev.key == KEY_UP) {
+			if (set_sel > 0)
+				set_sel--;
+		} else if (ev.key == KEY_DOWN) {
+			if (set_sel < SET_PHR_N - 1)
+				set_sel++;
+		} else if (ev.key == KEY_EXE || ev.key == KEY_F1) {
+			uint16_t buf[24];
+			int n = gb_cells(set_phr_gb[set_sel], buf, 24);
+			set_insert(buf, n);
+		}
+		return;
+	}
 }
 
 /*=== search ===============================================================*/
@@ -4113,7 +4448,7 @@ static void handle_book_key(key_event_t ev)
 		return;
 	}
 	/* the loop only repaints on its own events, so paint here */
-	dclear(C_WHITE);
+	dclear(PAPER);
 	draw_book();
 	dupdate();
 }
@@ -4261,6 +4596,9 @@ static void handle_view_key(key_event_t ev)
 			return;
 		case A_GOTO:
 			open_goto();
+			return;
+		case A_SET:
+			open_settings();
 			return;
 		case A_SAVE:
 			strncpy(relist_name, names[list_sel], NAME_MAX_L);
@@ -4732,8 +5070,7 @@ static void handle_list_key(key_event_t ev)
 		}
 		return;
 	case KEY_F6:
-		help_back = MODE_LIST;
-		mode = MODE_HELP;
+		open_settings();
 		return;
 	case KEY_DEL:
 		if (name_count == 0)
@@ -4937,8 +5274,8 @@ restart:
 	names_fc = malloc(MAX_ENTRIES * NAME_FC_MAX * sizeof(uint16_t));
 	is_dir = malloc(MAX_ENTRIES);
 	if (!cells || !rawbuf || !names || !is_dir || !names_fc) {
-		dclear(C_WHITE);
-		dtext(2, 2, C_BLACK, "out of memory");
+		dclear(PAPER);
+		dtext(2, 2, INKBAR, "out of memory");
 		dupdate();
 		getkey();
 		return 1;
@@ -4994,10 +5331,12 @@ have_memory:
 		list_top = list_sel;
 	if (!rec_buf)
 		rec_buf = malloc((size_t)RECENT_MAX * RECENT_LEN);
+	set_defaults();		/* frequent characters */
+	ui_inv = set_inv;
 	app_ready = 1;
 
 	for (;;) {
-		dclear(C_WHITE);
+		dclear(PAPER);
 		if (mode == MODE_LIST)
 			draw_list();
 		else if (mode == MODE_VIEW)
@@ -5014,6 +5353,18 @@ have_memory:
 			draw_book();
 		else if (mode == MODE_GOTO)
 			draw_goto();
+		else if (mode == MODE_SET)
+			draw_set();
+		else if (mode == MODE_SET_INV)
+			draw_set_inv();
+		else if (mode == MODE_SET_UNIT)
+			draw_set_unit();
+		else if (mode == MODE_SET_IME)
+			draw_set_ime();
+		else if (mode == MODE_SET_CHARS)
+			draw_set_chars();
+		else if (mode == MODE_SET_PHR)
+			draw_set_phr();
 		else
 			draw_keyboard();
 
@@ -5060,11 +5411,13 @@ have_memory:
 			handle_book_key(ev);
 		} else if (mode == MODE_GOTO) {
 			handle_goto_key(ev);
+		} else if (mode >= MODE_SET && mode <= MODE_SET_PHR) {
+			handle_set_key(ev);
 } else if (mode == MODE_HELP) {
 			if (!ev_repeat && ev.key == KEY_LEFT)
-				help_page = (help_page + 3) % 4;
+				help_page = (help_page + 4) % 5;
 			else if (!ev_repeat && ev.key == KEY_RIGHT)
-				help_page = (help_page + 1) % 4;
+				help_page = (help_page + 1) % 5;
 			else if (ev.key == KEY_EXIT || ev.key == KEY_EXE)
 				mode = help_back;
 		} else {
