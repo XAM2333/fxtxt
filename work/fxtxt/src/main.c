@@ -4096,9 +4096,15 @@ static void handle_view_key(key_event_t ev)
 		}
 		return;
 	case KEY_F2:
-		/* page one: 大写锁定, page two: 查找 */
+		/* page one: 退出编辑 (labels say 退出), page two: 查找 */
 		if (edit_mode && !fbar_page) {
-			caps_on = !caps_on;
+			if (dirty) {
+				confirm_kind = 1;
+				mode = MODE_CONFIRM;
+				return;
+			}
+			edit_mode = !edit_mode;
+			fbar_page = 0;
 			return;
 		}
 		mode = MODE_SEARCH;
@@ -4126,6 +4132,11 @@ static void handle_view_key(key_event_t ev)
 		fbar_page = fbar_page ? 0 : 1;
 		return;
 	case KEY_F3:
+		/* page one: 大写锁定 */
+		if (edit_mode && !fbar_page) {
+			caps_on = !caps_on;
+			return;
+		}
 		if (edit_mode && dirty) {
 			confirm_kind = 1;
 			mode = MODE_CONFIRM;
