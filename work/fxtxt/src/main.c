@@ -2875,7 +2875,7 @@ static void draw_view(void)
 		if (crow >= view_top + rows()) view_top = crow - rows() + 1;
 	}
 
-	static char const *lab_read[6] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xCA\xE9\xC7\xA9", "" };
+	static char const *lab_read[6] = { "\xB1\xE0\xBC\xAD", "\xB2\xE9\xD5\xD2", "", "", "\xCA\xE9\xC7\xA9", "\xB0\xEF\xD6\xFA" };
 	/* search result: 上一 / 下一 / 再查 ... 退出 / 帮助 */
 	static char const *lab_hit[6] = {
 		"\xC9\xCF\xD2\xBB", "\xCF\xC2\xD2\xBB", "\xD4\xD9\xB2\xE9",
@@ -3945,6 +3945,17 @@ static void handle_view_key(key_event_t ev)
 			return;
 		}
 	}
+	/* Reading page: F1 edits, F2 searches, F3 also searches (it used to
+	   be the edit key, some habits die hard).  Edit mode is untouched. */
+	if (!edit_mode && search_n == 0) {
+		if (ev.key == KEY_F1)
+			ev.key = KEY_F3;		/* reuse the toggle below */
+		else if (ev.key == KEY_F2 || ev.key == KEY_F3) {
+			mode = MODE_SEARCH;
+			py_reset();
+			return;
+		}
+	}
 	/* While a pinyin composition is open, its own keys win. */
 	if (edit_mode && py_len > 0) {
 		int n = py_candidates();
@@ -4124,6 +4135,11 @@ static void handle_view_key(key_event_t ev)
 			open_keyboard(0, PAGE_PUNCT);
 		return;
 	case KEY_F6:
+		if (!edit_mode) {
+			help_back = MODE_VIEW;
+			mode = MODE_HELP;
+			return;
+		}
 		if (!edit_mode && fbar_page && ev.key == KEY_F5) {
 			help_back = MODE_VIEW;
 			mode = MODE_HELP;
