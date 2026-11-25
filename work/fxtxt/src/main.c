@@ -2917,14 +2917,13 @@ static void draw_view(void)
 	char info[16];
 	info[0] = 0;
 	if (!edit_mode) {
-		if (search_n > 0)
-			snprintf(info, sizeof info, "%d/%d", search_cur + 1, search_n);
-		else {
-			int pg = (chunk_rows + view_top) / rows() + 1;
-			int tp = (total_rows + rows() - 1) / rows();
-			if (tp < 1) tp = 1;
-			snprintf(info, sizeof info, "%d/%d", pg, tp);
-		}
+		/* always pages: during a search the counter used to show the hit
+		   index, which read like a line count (bug report: unit should be
+		   pages) */
+		int pg = (chunk_rows + view_top) / rows() + 1;
+		int tp = (total_rows + rows() - 1) / rows();
+		if (tp < 1) tp = 1;
+		snprintf(info, sizeof info, "%d/%d", pg, tp);
 	}
 	ui_reserve_w = info[0] ? ui_width(info) + 4 : (edit_mode ? 46 : 0);
 
