@@ -53,6 +53,7 @@ static int text_max = TEXT_MIN;
 #define CELL_CJK   0x0100u
 
 enum { MODE_LIST = 0, MODE_VIEW, MODE_KEYB, MODE_HELP, MODE_NAME, MODE_SEARCH, MODE_CONFIRM, MODE_BOOK,
+       MODE_GOTO,
        };
 enum { PAGE_PINYIN = 0, PAGE_PUNCT, PAGE_LOWER, PAGE_UPPER, PAGE_DIGIT, PAGE_SYMBOL };
 #define PAGE_COUNT 6
@@ -113,6 +114,8 @@ static void goto_line(int line);
 static int global_row(void);
 static int global_line(void);
 static void page_step(int dir);
+static void open_goto(void);
+static void handle_goto_key(key_event_t ev);
 static int hit_chunk(int hit);
 static int hit_cell(int hit);
 
@@ -256,6 +259,7 @@ static int cell_adv(uint16_t cell)
 
 /* Chrome text may be Chinese: decode UTF-8 and draw with the small font. */
 static int ui_clip_x = 128;
+static int ui_reserve_w = -1;	/* pixels the caller reserved on the right */
 static int blink_on = 1;		/* caret phase, flips every 0.25 s */
 
 
@@ -457,7 +461,9 @@ static void ui_title_state(char const *text, int show_input)
 	   from fixed budgets because the caller builds the counter string
 	   after the title. */
 	int clip;
-	if (show_input)
+	if (ui_reserve_w >= 0)
+		clip = 127 - ui_reserve_w - 3;	/* the caller measured it already */
+	else if (show_input)
 		clip = 127 - 46 - 3;	/* A / S / 中英 / 大小写 */
 	else if (ui_info_right)
 		clip = 127 - 44 - 3;	/* reading page counter */
@@ -646,6 +652,15 @@ static int row_start(int row)
 		p = next_row(p);
 	return p;
 }
+
+static int tail_row(void)
+{
+	/* the empty line after a final newline counts only at the end of a file */
+	return (chunk_idx == chunk_n - 1 && ncell > 0 && cells[ncell - 1] == CELL_NL)
+		? 1 : 0;
+}
+
+static int tail_row(void);
 
 static int row_count(void)
 {
@@ -1867,10 +1882,9 @@ static void name_commit(void)
 		int rc;
 		snprintf(oldn, sizeof oldn, "%s", names[list_sel]);
 		if (!strcmp(oldn, name)) {
-			name_rename = 0;
+			create_ok = 2;	/* nothing to do: back to the list */
 			return;
 		}
-		name_rename = 0;
 		rc = name_rename_copy(oldn, name);
 		if (rc == -2) {
 			snprintf(status_msg, sizeof status_msg, "\xCE\xC4\xBC\xFE\xCC\xAB\xB4\xF3\xCE\xDE\xB7\xA8\xB8\xC4\xC3\xFB");
@@ -1880,6 +1894,7 @@ static void name_commit(void)
 			snprintf(status_msg, sizeof status_msg, "\xB8\xC4\xC3\xFB\xCA\xA7\xB0\xDC");
 			return;
 		}
+		name_rename = 0;	/* only a successful rename leaves the page */
 		fs_list_dir();
 		for (int i = 0; i < name_count; i++)
 			if (!strcmp(names[i], name)) {
@@ -2227,7 +2242,13 @@ static void build_chunk_table(void)
 		chunk_l0[chunk_n] = total_lines;
 		decode_into_cells(rawbuf, cut);
 		total_rows += row_count();
+		/* the empty line after the file's last newline belongs to the
+		   document, but only the last window can end with one */
+		if (last && ncell > 0 && cells[ncell - 1] == CELL_NL)
+			total_rows += 1;
 		total_lines += line_count();
+		if (last && ncell > 0 && cells[ncell - 1] == CELL_NL)
+			total_lines += 1;
 		chunk_n++;
 		base += cut;
 		if (last || n <= 0)
@@ -2344,10 +2365,13 @@ static void goto_row(int grow)
 	if (c != chunk_idx || ncell == 0)
 		chunk_load(c);
 	view_top = grow - chunk_rows;
-	if (view_top > row_count() - 1)
-		view_top = row_count() - 1;
+	if (view_top > row_count() + tail_row() - 1)
+		view_top = row_count() + tail_row() - 1;
 	if (view_top < 0)
 		view_top = 0;
+	/* a page is exactly rows() display rows, so every screen starts on the
+	   grid: the row that would overflow belongs to the next page (bug 2) */
+	view_top = (view_top / rows()) * rows();
 }
 
 /* Show document line `line` at the top of the screen. */
@@ -2365,16 +2389,17 @@ static void goto_line(int line)
 	if (c != chunk_idx || ncell == 0)
 		chunk_load(c);
 	l = line - chunk_lines;
-	if (l > line_count() - 1)
-		l = line_count() - 1;
+	if (l > line_count() + tail_row() - 1)
+		l = line_count() + tail_row() - 1;
 	if (l < 0)
 		l = 0;
 	cur_line = l;
 	view_top = row_of_cell(line_start(l));
-	if (view_top > row_count() - 1)
-		view_top = row_count() - 1;
+	if (view_top > row_count() + tail_row() - 1)
+		view_top = row_count() + tail_row() - 1;
 	if (view_top < 0)
 		view_top = 0;
+	view_top = (view_top / rows()) * rows();	/* stay on the page grid */
 }
 
 /* One screen up (dir < 0) or down.  Pages are stepped on the grid of rows()
@@ -2814,21 +2839,21 @@ enum {
 	A_NONE = 0,
 	A_EDIT, A_FIND, A_BOOK, A_HELP,			/* reading page */
 	A_HIT_PREV, A_HIT_NEXT, A_HIT_QUERY, A_HIT_CLOSE,	/* result list */
-	A_SAVE, A_LEAVE, A_CAPS, A_PUNCT, A_CN, A_PAGE, A_UNDO
+	A_SAVE, A_LEAVE, A_CAPS, A_PUNCT, A_CN, A_PAGE, A_UNDO, A_GOTO
 };
 
 static unsigned char const fk_act[FS_N][6] = {
-	{ A_EDIT,     A_FIND,     A_NONE,      A_NONE,  A_BOOK,      A_HELP },
+	{ A_EDIT,     A_FIND,     A_NONE,      A_GOTO,  A_BOOK,      A_HELP },
 	{ A_HIT_PREV, A_HIT_NEXT, A_HIT_QUERY, A_NONE,  A_HIT_CLOSE, A_HELP },
 	{ A_SAVE,     A_LEAVE,    A_CAPS,      A_PUNCT, A_CN,        A_PAGE },
-	{ A_UNDO,     A_FIND,     A_NONE,      A_NONE,  A_HELP,      A_PAGE },
+	{ A_UNDO,     A_FIND,     A_GOTO,      A_NONE,  A_HELP,      A_PAGE },
 };
 
 static char const *fk_lab[FS_N][6] = {
-	{ "\xB1\xE0\xBC\xAD", "\xB2\xE9\xD5\xD2", 0, 0, "\xCA\xE9\xC7\xA9", "\xB0\xEF\xD6\xFA" },
+	{ "\xB1\xE0\xBC\xAD", "\xB2\xE9\xD5\xD2", 0, "\xCC\xF8\xD7\xAA", "\xCA\xE9\xC7\xA9", "\xB0\xEF\xD6\xFA" },
 	{ "\xC9\xCF\xCC\xF5", "\xCF\xC2\xCC\xF5", "\xD4\xD9\xB2\xE9", 0, "\xCD\xCB\xB3\xF6", "\xB0\xEF\xD6\xFA" },
 	{ "\xB1\xA3\xB4\xE6", "\xCD\xCB\xB3\xF6", "\xB4\xF3\xD0\xB4", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB7\xAD\xD2\xB3" },
-	{ "\xB3\xB7\xCF\xFA", "\xB2\xE9\xD5\xD2", 0, 0, "\xB0\xEF\xD6\xFA", "\xB7\xAD\xD2\xB3" },
+	{ "\xB3\xB7\xCF\xFA", "\xB2\xE9\xD5\xD2", "\xCC\xF8\xD7\xAA", 0, "\xB0\xEF\xD6\xFA", "\xB7\xAD\xD2\xB3" },
 };
 
 static int fk_state(void)
@@ -2878,7 +2903,7 @@ static void comp_draw(void)
 static void draw_view(void)
 {
 	ui_no_cups = 0;
-	int rows_total = row_count();
+	int rows_total = row_count() + tail_row();
 	{
 		int lim = rows_total - 1;	/* the last page may be short */
 		if (lim < 0) lim = 0;
@@ -2886,9 +2911,27 @@ static void draw_view(void)
 		if (view_top < 0) view_top = 0;
 	}
 
+	/* Build the right-hand counter *before* the title: the title's clip
+	   depends on how wide the counter is, and reading ui_info_right from the
+	   previous frame made a long name truncate twice (bug 21). */
+	char info[16];
+	info[0] = 0;
+	if (!edit_mode) {
+		if (search_n > 0)
+			snprintf(info, sizeof info, "%d/%d", search_cur + 1, search_n);
+		else {
+			int pg = (chunk_rows + view_top) / rows() + 1;
+			int tp = (total_rows + rows() - 1) / rows();
+			if (tp < 1) tp = 1;
+			snprintf(info, sizeof info, "%d/%d", pg, tp);
+		}
+	}
+	ui_reserve_w = info[0] ? ui_width(info) + 4 : (edit_mode ? 46 : 0);
+
 	char head[40];
 	snprintf(head, sizeof head, "%s%s", edit_mode ? "*" : "", names[list_sel]);
 	ui_title_state(head, edit_mode);
+	ui_reserve_w = -1;
 
 	/* where is the cursor in display-row space? */
 	int ccell = -1, crow = -1;
@@ -2896,8 +2939,8 @@ static void draw_view(void)
 		ccell = line_start(cur_line) + cur_col;
 		if (ccell > ncell) ccell = ncell;
 		crow = row_of_cell(ccell);
-		if (crow < view_top) view_top = crow;
-		if (crow >= view_top + rows()) view_top = crow - rows() + 1;
+		if (crow < view_top || crow >= view_top + rows())
+			view_top = (crow / rows()) * rows();	/* whole pages only */
 	}
 
 	{
@@ -2941,19 +2984,9 @@ static void draw_view(void)
 	if (edit_mode && py_len > 0) {
 		comp_draw();
 	} else {
-		char info[16];
-		info[0] = 0;
 		ui_info_right = 0;
-		if (!edit_mode) {
-			if (search_n > 0)
-				snprintf(info, sizeof info, "%d/%d",
-				         search_cur + 1, search_n);
-			else
-				snprintf(info, sizeof info, "%d/%d",
-				         chunk_rows + view_top + 1,
-				         total_rows > 0 ? total_rows : rows_total);
+		if (!edit_mode)
 			ui_info_right = 1;
-		}
 		ui_hints(edit_mode ? (cn_mode ? hint_edit_cn : hint_edit_en) : hint_view, info,
 		         edit_mode);
 		ui_info_right = 0;
@@ -2998,6 +3031,21 @@ static char alpha_letter(int key)
 	case KEY_0:      return 'z';
 	default:         return 0;
 	}
+}
+
+/* ALPHA + [x10^x] types a quotation mark.  Writing a plain ASCII quote into a
+   Chinese document reads wrong, so the key alternates between the full width
+   pair A1B0/A1B1 the way a writer would: open, close, open, close. */
+static uint16_t quote_cell(void)
+{
+	int n = 0;
+	int from = line_start(cur_line);
+	int to = from + cur_col;
+
+	for (int i = from; i < to && i < ncell; i++)
+		if (cells[i] == CELL_CJK + 15 || cells[i] == CELL_CJK + 16)
+			n++;
+	return (n & 1) ? (uint16_t)(CELL_CJK + 16) : (uint16_t)(CELL_CJK + 15);
 }
 
 /* Characters printed on the ALPHA overlay that are not letters. */
@@ -3100,6 +3148,153 @@ static uint16_t punct_cell(int n)
 }
 
 /*=== search prompt ========================================================*/
+
+/* The punctuation grid is 13 cells wide but only PUNCT_COUNT cells exist, and
+   the last row is two cells short.  Column arithmetic therefore walked off the
+   end of the table (bug 23) and could never reach 第三行 or ♂ (bug 24).  The
+   cursor walks the cells that really exist, in reading order. */
+static int punct_live_at(int pos)
+{
+	int k = 0;
+	for (int i = 0; i < PUNCT_COUNT; i++)
+		if (punct_cell(i)) {
+			if (k == pos)
+				return i;
+			k++;
+		}
+	return -1;
+}
+
+static int punct_pos(void)
+{
+	int idx = kb_row * 13 + kb_col, k = 0;
+	for (int i = 0; i < PUNCT_COUNT; i++)
+		if (punct_cell(i)) {
+			if (i == idx)
+				return k;
+			k++;
+		}
+	return 0;
+}
+
+static int punct_live_n(void)
+{
+	int k = 0;
+	for (int i = 0; i < PUNCT_COUNT; i++)
+		if (punct_cell(i))
+			k++;
+	return k ? k : 1;
+}
+
+static void punct_set(int pos)
+{
+	int n = punct_live_n();
+	int idx = punct_live_at(((pos % n) + n) % n);
+	if (idx >= 0) {
+		kb_row = idx / 13;
+		kb_col = idx % 13;
+	}
+}
+
+static void punct_side(int dir)
+{
+	punct_set(punct_pos() + dir);
+}
+
+static void punct_move(int dir)		/* up / down: nearest cell in that row */
+{
+	int idx = punct_live_at(punct_pos());
+	int col = idx % 13, trow = idx / 13 + dir;
+	int best = -1, bestd = 99;
+
+	if (idx < 0 || trow < 0 || trow > 2)
+		return;
+	for (int i = 0; i < PUNCT_COUNT; i++) {
+		int d;
+		if (i / 13 != trow || !punct_cell(i))
+			continue;
+		d = i % 13 - col;
+		if (d < 0)
+			d = -d;
+		if (d < bestd) {
+			bestd = d;
+			best = i;
+		}
+	}
+	if (best >= 0) {
+		kb_row = best / 13;
+		kb_col = best % 13;
+	}
+}
+
+/*=== goto line ==================================================
+  A line number page: the reader's F4 and the editor's second page F3 both
+  lead here, so a long document can be reached without paging. */
+static char goto_buf[8];
+static int goto_len;
+
+static void open_goto(void)
+{
+	goto_buf[0] = 0;
+	goto_len = 0;
+	py_reset();
+	mode = MODE_GOTO;
+}
+
+static void draw_goto(void)
+{
+	char tmp[32];
+	char view[12];
+
+	ui_no_cups = 1;
+	for (int i = 0; i < 6; i++)
+		box_lab[i] = 0;
+	ui_title("\xCC\xF8\xD7\xAA");
+	snprintf(view, sizeof view, "%s_", goto_buf);
+	draw_ui(2, CONTENT_Y + 2, "\xCC\xF8\xD7\xAA", 0);
+	draw_ui(46, CONTENT_Y + 2, view, 0);
+	snprintf(tmp, sizeof tmp, "%d / %d", goto_len ? atoi(goto_buf) : 0,
+	         total_lines > 0 ? total_lines : 1);
+	draw_ui(2, CONTENT_Y + 12, tmp, 0);
+	draw_ui(2, CONTENT_Y + 22, "\xCA\xE4\xC8\xEB\xD0\xD0\xBA\xC5", 0);
+	draw_ui(2, STATUS_Y, "EXE \xCC\xF8\xD7\xAA   EXIT \xC8\xA1\xCF\xFB", 0);
+	ui_hints("", "", 0);
+	dupdate();
+}
+
+static void handle_goto_key(key_event_t ev)
+{
+	int line;
+
+	if (ev.key == KEY_EXIT) {
+		mode = MODE_VIEW;
+		return;
+	}
+	if (ev.key == KEY_EXE) {
+		if (goto_len > 0) {
+			line = atoi(goto_buf) - 1;
+			goto_line(line);
+			if (edit_mode)
+				cur_col = 0;
+		}
+		mode = MODE_VIEW;
+		return;
+	}
+	if (ev.key == KEY_DEL) {
+		if (goto_len > 0)
+			goto_buf[--goto_len] = 0;
+		return;
+	}
+	{
+		/* key_ascii knows where each digit really is: the KEY_ constants
+		   are not laid out in digit order */
+		char c = key_ascii(ev.key);
+		if (c >= '0' && c <= '9' && goto_len < 6) {
+			goto_buf[goto_len++] = c;
+			goto_buf[goto_len] = 0;
+		}
+	}
+}
 
 static void draw_search(void)
 {
@@ -3499,7 +3694,9 @@ static void draw_keyboard(void)
 		}
 		grid_y = CONTENT_Y + 22;
 	} else {
-		grid_y = CONTENT_Y + 2;
+		/* five letter rows have to fit above the status line: start one
+		   row higher than the old grid did (its last row was clipped) */
+		grid_y = CONTENT_Y + 1;
 	}
 
 	int gc = kb_cols();
@@ -3512,7 +3709,7 @@ static void draw_keyboard(void)
 				continue;
 			int x = 3 + c * ((pinyin || punct) ? 9 : 20);
 			int y = grid_y + r * 9;
-			if (y + 8 > STATUS_Y - 2)
+			if (y + 8 > STATUS_Y)	/* the fifth letter row used to be cut */
 				continue;
 			int sel = (r == kb_row && c == kb_col);
 			if (sel)
@@ -3566,14 +3763,14 @@ static void draw_help(void)
 	static char const *page2[] = {
 		"\xC9\xCF\xCF\xC2\xBC\xFC\x20\xB7\xAD\xD2\xB3\x20\x20\x20\x45\x58\x45\x20\xB0\xEF\xD6\xFA",
 		"\x46\x31\x20\xB1\xE0\xBC\xAD\x20\x20\x20\x46\x32\x20\xB2\xE9\xD5\xD2",
-		"\x46\x35\x20\xCA\xE9\xC7\xA9\x20\x20\x20\x46\x36\x20\xB0\xEF\xD6\xFA",
-		"\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8\xC1\xD0\xB1\xED",
+		"\x46\x34\x20\xCC\xF8\xD7\xAA\x20\x20\x20\x46\x35\x20\xCA\xE9\xC7\xA9",
+		"\x46\x36\x20\xB0\xEF\xD6\xFA\x20\x20\x20\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8",
 	};
 	static char const *page3[] = {
 		"\x46\x31\x20\xB1\xA3\xB4\xE6\x20\x20\x20\x46\x32\x20\xCD\xCB\xB3\xF6",
 		"\x46\x33\x20\xB4\xF3\xD0\xB4\x20\x20\x20\x46\x34\x20\xB1\xEA\xB5\xE3",
 		"\x46\x35\x20\xD6\xD0\xD3\xA2\x20\x20\x20\x46\x36\x20\xB7\xAD\xD2\xB3",
-		"\x45\x58\x45\x20\xBB\xBB\xD0\xD0\x20\x20\x20\x44\x45\x4C\x20\xC9\xBE\xD7\xD6",
+		"\xB6\xFE\xD2\xB3\x20\x46\x33\x20\xCC\xF8\xD7\xAA\x20\x45\x58\x45\x20\xBB\xBB\xD0\xD0",
 	};
 	static char const *page4[] = {
 		"\x46\x31\x20\xCB\xD1\xCB\xF7\x20\x20\x20\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8",
@@ -4049,6 +4246,9 @@ static void handle_view_key(key_event_t ev)
 			search_n = 0;
 			search_len = 0;
 			return;
+		case A_GOTO:
+			open_goto();
+			return;
 		case A_SAVE:
 			strncpy(relist_name, names[list_sel], NAME_MAX_L);
 			relist_name[NAME_MAX_L] = 0;
@@ -4120,6 +4320,8 @@ static void handle_view_key(key_event_t ev)
 				uint16_t cell = (uint16_t)((unsigned char)c - 0x20);
 				if (cn_mode)
 					cell = kb_fullwidth(cell);
+				if (c == '"' && cn_mode)
+					cell = quote_cell();	/* “ ” instead of " */
 				text_insert(cell);
 			}
 			return;
@@ -4230,22 +4432,22 @@ static void handle_kb_key(key_event_t ev)
 	}
 
 	switch (ev.key) {
-	case KEY_UP:    if (kb_row > 0) kb_row--; return;
-	case KEY_DOWN:  if (kb_row < gr - 1) kb_row++; return;
+	case KEY_UP:
+	case KEY_DOWN:
+		if (punct) {
+			punct_move(ev.key == KEY_DOWN ? 1 : -1);
+			return;
+		}
+		if (ev.key == KEY_UP) {
+			if (kb_row > 0) kb_row--;
+		} else if (kb_row < gr - 1) {
+			kb_row++;
+		}
+		return;
 	case KEY_LEFT:
 	case KEY_RIGHT:
 		if (punct) {
-			int i = kb_row * 13 + kb_col;
-			int step = (ev.key == KEY_RIGHT) ? 1 : -1;
-			for (int k = 0; k < 26; k++) {
-				i += step;
-				if (i < 0) i = 25;
-				if (i > 25) i = 0;
-				if (punct_cell(i))
-					break;
-			}
-			kb_row = i / 13;
-			kb_col = i % 13;
+			punct_side(ev.key == KEY_RIGHT ? 1 : -1);
 			return;
 		}
 		if (ev.key == KEY_LEFT) {
@@ -4293,17 +4495,8 @@ static void handle_kb_key(key_event_t ev)
 		return;
 	case KEY_EXE:
 		if (punct) {
-			uint16_t pc = punct_cell(kb_row * 13 + kb_col);
-			if (!pc) {			/* empty cell: jump to the next one */
-				int i = kb_row * 13 + kb_col;
-				while (i < PUNCT_COUNT - 1 && !punct_cell(++i))
-					;
-				if (i < 26) {
-					kb_row = i / 13;
-					kb_col = i % 13;
-				}
-				return;
-			}
+			int pick = punct_live_at(punct_pos());
+			uint16_t pc = pick >= 0 ? punct_cell(pick) : 0;
 			if (pc) {
 				kb_put(pc);
 				if (kb_target == 0) {		/* back to the document */
@@ -4343,6 +4536,26 @@ static void handle_kb_key(key_event_t ev)
 
 static void fs_delete_selected(void);
 
+/* A document's .POS sidecar has to go with it, otherwise the folder fills up
+   with orphans for files that no longer exist. */
+static void fs_delete_pos_for(char const *name)
+{
+	char pn[NAME_MAX_L + 6];
+	size_t n = strlen(name);
+	char *dot;
+
+	if (n > NAME_MAX_L)
+		n = NAME_MAX_L;
+	memcpy(pn, name, n);
+	pn[n] = 0;
+	dot = strrchr(pn, '.');
+	if (dot && dot > pn && !strchr(dot, '\\'))
+		strcpy(dot, ".POS");
+	else
+		strcpy(pn + n, ".POS");
+	fs_delete_path(pn);
+}
+
 static void fs_delete_selected(void)
 {
 	char name[NAME_MAX_L + 1];
@@ -4352,6 +4565,7 @@ static void fs_delete_selected(void)
 	memcpy(fc, names_fc[list_sel], sizeof fc);
 	if (BFile_Remove(fc) != 0)
 		fs_delete_path(name);
+	fs_delete_pos_for(name);
 	fs_list_dir();
 	if (list_sel >= name_count)
 		list_sel = name_count ? name_count - 1 : 0;
@@ -4785,6 +4999,8 @@ have_memory:
 			draw_confirm();
 		else if (mode == MODE_BOOK)
 			draw_book();
+		else if (mode == MODE_GOTO)
+			draw_goto();
 		else
 			draw_keyboard();
 
@@ -4829,6 +5045,8 @@ have_memory:
 			handle_confirm_key(ev);
 		} else if (mode == MODE_BOOK) {
 			handle_book_key(ev);
+		} else if (mode == MODE_GOTO) {
+			handle_goto_key(ev);
 } else if (mode == MODE_HELP) {
 			if (!ev_repeat && ev.key == KEY_LEFT)
 				help_page = (help_page + 3) % 4;
