@@ -355,7 +355,7 @@ static int book_sel;
 static int book_v[6];
 static int book_del_ask;
 static int book_ask_sel;	/* snapshot, drawn every frame */
-static int book_page;	/* 0: page one, 1: page two (F6 flips) */
+static int book_line;	/* line captured when the bookmark page opens */
 
 /* Six cups along the bottom edge (F1..F6): no bottom edge, no gaps, and each
    one carries its own short label. */
@@ -3255,7 +3255,6 @@ static void draw_keyboard(void)
 
 static int help_page;
 static int help_sel;
-static int book_page;
 static int help_back = MODE_LIST;	/* where to return after help */
 static char del_name[NAME_MAX_L + 1];	/* file waiting for confirmation */
 static int confirm_kind;		/* 0 = delete, 1 = discard edits */
@@ -3562,7 +3561,7 @@ static void handle_book_key(key_event_t ev)
 		book_del_ask = 0;
 	} else if (ev.key == KEY_F1) {
 		if (k >= 0) {
-			pos_tab[k].bm[book_sel] = book_page + 1;
+			pos_tab[k].bm[book_sel] = book_line + 1;
 			book_load();
 		}
 		book_del_ask = 0;
@@ -3594,7 +3593,7 @@ static void handle_view_key(key_event_t ev)
 {
 	if (!edit_mode && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
 		book_sel = 0;
-		book_page = chunk_rows + view_top + 1;
+		book_line = chunk_rows + view_top + 1;
 		mode = MODE_BOOK;
 		return;
 	}
@@ -4504,7 +4503,7 @@ have_memory:
 		if (mode == MODE_VIEW && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
 			book_sel = 0;
 			book_load();
-			book_page = chunk_rows + view_top + 1;
+			book_line = chunk_rows + view_top + 1;
 			mode = MODE_BOOK;
 			/* draw right now: the loop does not repaint for this key */
 			dclear(C_WHITE);
@@ -4551,7 +4550,7 @@ have_memory:
 			handle_book_key(ev);
 } else if (mode == MODE_HELP) {
 			if (!ev_repeat && ev.key == KEY_LEFT)
-				help_page = (help_page + 2) % 4;
+				help_page = (help_page + 3) % 4;
 			else if (!ev_repeat && ev.key == KEY_RIGHT)
 				help_page = (help_page + 1) % 4;
 			else if (ev.key == KEY_EXIT || ev.key == KEY_EXE || ev.key == KEY_F2)
