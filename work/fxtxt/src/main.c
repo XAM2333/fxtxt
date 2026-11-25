@@ -2875,7 +2875,7 @@ static void draw_view(void)
 		if (crow >= view_top + rows()) view_top = crow - rows() + 1;
 	}
 
-	static char const *lab_read[6] = { "\xB2\xE9\xD5\xD2", "\xB1\xE0\xBC\xAD", "", "", "\xCA\xE9\xC7\xA9", "" };
+	static char const *lab_read[6] = { "\xB1\xE0\xBC\xAD", "", "\xB2\xE9\xD5\xD2", "", "\xCA\xE9\xC7\xA9", "" };
 	/* search result: 上一 / 下一 / 再查 ... 退出 / 帮助 */
 	static char const *lab_hit[6] = {
 		"\xC9\xCF\xD2\xBB", "\xCF\xC2\xD2\xBB", "\xD4\xD9\xB2\xE9",
@@ -3897,6 +3897,12 @@ static void handle_book_key(key_event_t ev)
 
 static void handle_view_key(key_event_t ev)
 {
+	if (!edit_mode && !ev.shift && !ev.alpha && search_n > 0
+	    && ev.key == KEY_F5) {
+		search_n = 0;		/* back to plain reading */
+		search_len = 0;
+		return;
+	}
 	if (!edit_mode && !ev.shift && !ev.alpha && ev.key == KEY_F5) {
 		book_sel = 0;
 		book_line = global_row() + 1;
@@ -3924,13 +3930,14 @@ static void handle_view_key(key_event_t ev)
 	}
 	if (!edit_mode && search_n > 0) {
 		/* F1 / F4 walk the matches; their normal meaning returns when
-		   no search is active */
-		if (ev.key == KEY_F1) {
+		   no search is active.  UP / DOWN do the same, which is what
+		   the result page advertises. */
+		if (ev.key == KEY_F1 || ev.key == KEY_UP) {
 			search_cur = (search_cur + search_n - 1) % search_n;
 			search_show();
 			return;
 		}
-		if (ev.key == KEY_F2 || ev.key == KEY_F4) {
+		if (ev.key == KEY_F2 || ev.key == KEY_F4 || ev.key == KEY_DOWN) {
 			search_cur = (search_cur + 1) % search_n;
 			search_show();
 			return;
@@ -3942,6 +3949,16 @@ static void handle_view_key(key_event_t ev)
 		if (ev.key == KEY_F5) {		/* leave the result state */
 			search_n = 0;
 			search_len = 0;
+			return;
+		}
+	}
+	/* Reading page: F1 edits, F3 searches (the labels say so). */
+	if (!edit_mode && search_n == 0) {
+		if (ev.key == KEY_F1)
+			ev.key = KEY_F3;	/* falls through to the edit toggle */
+		else if (ev.key == KEY_F3) {
+			mode = MODE_SEARCH;
+			py_reset();
 			return;
 		}
 	}
