@@ -2917,13 +2917,14 @@ static void draw_view(void)
 	char info[16];
 	info[0] = 0;
 	if (!edit_mode) {
-		/* always pages: during a search the counter used to show the hit
-		   index, which read like a line count (bug report: unit should be
-		   pages) */
-		int pg = (chunk_rows + view_top) / rows() + 1;
-		int tp = (total_rows + rows() - 1) / rows();
-		if (tp < 1) tp = 1;
-		snprintf(info, sizeof info, "%d/%d", pg, tp);
+		if (search_n > 0)
+			snprintf(info, sizeof info, "%d/%d", search_cur + 1, search_n);
+		else {
+			int pg = (chunk_rows + view_top) / rows() + 1;
+			int tp = (total_rows + rows() - 1) / rows();
+			if (tp < 1) tp = 1;
+			snprintf(info, sizeof info, "%d/%d", pg, tp);
+		}
 	}
 	ui_reserve_w = info[0] ? ui_width(info) + 4 : (edit_mode ? 46 : 0);
 
@@ -3252,10 +3253,14 @@ static void draw_goto(void)
 	snprintf(view, sizeof view, "%s_", goto_buf);
 	draw_ui(2, CONTENT_Y + 2, "\xCC\xF8\xD7\xAA", 0);
 	draw_ui(46, CONTENT_Y + 2, view, 0);
-	snprintf(tmp, sizeof tmp, "%d / %d", goto_len ? atoi(goto_buf) : 0,
-	         total_lines > 0 ? total_lines : 1);
+	{
+		int tp = (total_rows + rows() - 1) / rows();
+		if (tp < 1)
+			tp = 1;
+		snprintf(tmp, sizeof tmp, "%d / %d", goto_len ? atoi(goto_buf) : 0, tp);
+	}
 	draw_ui(2, CONTENT_Y + 12, tmp, 0);
-	draw_ui(2, CONTENT_Y + 22, "\xCA\xE4\xC8\xEB\xD0\xD0\xBA\xC5", 0);
+	draw_ui(2, CONTENT_Y + 22, "\xCA\xE4\xC8\xEB\xD2\xB3\xC2\xEB", 0);
 	draw_ui(2, STATUS_Y, "EXE \xCC\xF8\xD7\xAA   EXIT \xC8\xA1\xCF\xFB", 0);
 	ui_hints("", "", 0);
 	dupdate();
@@ -3271,10 +3276,19 @@ static void handle_goto_key(key_event_t ev)
 	}
 	if (ev.key == KEY_EXE) {
 		if (goto_len > 0) {
-			line = atoi(goto_buf) - 1;
-			goto_line(line);
-			if (edit_mode)
+			int tp = (total_rows + rows() - 1) / rows();
+			if (tp < 1)
+				tp = 1;
+			line = atoi(goto_buf);	/* a page number now */
+			if (line < 1)
+				line = 1;
+			if (line > tp)
+				line = tp;
+			goto_row((line - 1) * rows());
+			if (edit_mode) {
+				cur_line = offset_to_line(row_start(view_top));
 				cur_col = 0;
+			}
 		}
 		mode = MODE_VIEW;
 		return;
