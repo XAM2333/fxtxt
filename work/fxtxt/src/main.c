@@ -52,6 +52,27 @@ static int text_max = TEXT_MIN;
 #define CELL_NL    0xFFFFu
 #define CELL_CJK   0x0100u
 
+/* CASIOWIN's fs gets inconsistent when BFile_Write() is handed an odd number
+   of bytes (gint's bfile.h warns about exactly this), and an inconsistent fs
+   is what reboots the unit.  Every write goes through here: the payload plus
+   one NUL terminator, padded to an even size. */
+static int bfile_write_even(int fd, void const *data, int len)
+{
+	unsigned char buf[1536];
+	int n;
+
+	if (len < 0)
+		return -1;
+	if (len > (int)sizeof buf - 2)
+		len = (int)sizeof buf - 2;
+	memcpy(buf, data, (size_t)len);
+	buf[len] = 0;
+	n = len + 1;
+	if (n & 1)
+		buf[n++] = 0;
+	return BFile_Write(fd, buf, n) < 0 ? -1 : 0;
+}
+
 enum { MODE_LIST = 0, MODE_VIEW, MODE_KEYB, MODE_HELP, MODE_NAME, MODE_SEARCH, MODE_CONFIRM, MODE_BOOK,
        MODE_GOTO,
        MODE_SET, MODE_SET_INV, MODE_SET_UNIT, MODE_SET_IME, MODE_SET_CHARS, MODE_SET_PHR,
@@ -2681,9 +2702,9 @@ static int rec_bfile_save(char const *data, int len)
 		int fd = BFile_Open(fc, BFile_WriteOnly);
 		if (fd < 0)
 			continue;
-		int w = BFile_Write(fd, data, len);
+		int w = bfile_write_even(fd, data, len);
 		BFile_Close(fd);
-		if (w == len)
+		if (w == 0)
 			return 0;
 	}
 	return -1;
@@ -3978,7 +3999,7 @@ static int gb_cells(char const *s, uint16_t *out, int cap)
 #define IME_FILE "FXTXT.IME_1"	/* created when no *.IME_* exists yet */
 #define IME_PAT  "*.IME_*"	/* any suffix after the underscore */
 #define IME_MAGIC "FIM1"
-#define CFG_ALLOC 128 		/* bytes reserved at creation */
+#define CFG_ALLOC 32		/* a few dozen bytes is all the settings need */ 		/* bytes reserved at creation */
 #define IME_ALLOC 512		/* binary word list: 4+1+48 + 8*(1+24) = 253 max */
 
 static int txt_fc(uint16_t *fc, int cap, char const *name)
@@ -4064,11 +4085,9 @@ static int txt_save(char const *name, char const *data, int len, int alloc)
 		if (fd < 0)
 			return txt_save_stdio(name, data, len);
 	}
-	int w = BFile_Write(fd, data, len);
-	char z = 0;
-	BFile_Write(fd, &z, 1);		/* stop the reader after our text */
+	int w = bfile_write_even(fd, data, len);
 	BFile_Close(fd);
-	return w == len ? 0 : -1;
+	return w == 0 ? 0 : -1;
 }
 
 static int ime_find(char *name, int cap)
