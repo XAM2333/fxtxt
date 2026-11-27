@@ -2112,8 +2112,9 @@ static void draw_name(void)
 		name_pos = name_len;
 	if (name_pos < 0)
 		name_pos = 0;
-	ui_title(name_rename ? "\xD6\xD8\xC3\xFC\xC3\xFB"
-	                     : "\xD0\xC2\xBD\xA8\xCE\xC4\xB5\xB5");
+	/* the same badges the editor shows: case, SHIFT and ALPHA */
+	ui_title_state(name_rename ? "\xD6\xD8\xC3\xFC\xC3\xFB"
+	                           : "\xD0\xC2\xBD\xA8\xCE\xC4\xB5\xB5", 1);
 	int y = CONTENT_Y + 2;
 	char line[64];
 	snprintf(line, sizeof line, "\xC4\xBF\xC2\xBC %s", cur_dir);
@@ -2137,6 +2138,8 @@ static void draw_name(void)
 		draw_ui(x + 3, y, rest, 0);
 	}
 	y += 10;
+	if (status_msg[0])
+		draw_ui(2, CONTENT_Y + 32, status_msg, 0);
 	{
 		char const *tail = name_rename
 			? ""			/* an existing extension is kept as it is */
@@ -2157,6 +2160,7 @@ static void draw_name(void)
 
 static void handle_name_key(key_event_t ev)
 {
+	status_msg[0] = 0;
 	name_len = (int)strlen(name_buf);
 	if (name_pos > name_len)
 		name_pos = name_len;
