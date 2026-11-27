@@ -1899,66 +1899,66 @@ static int txt_fc(uint16_t *fc, int cap, char const *name);
 
 static int name_copy_file(char const *oldn, char const *newn)
 {
-	enum { CAP = 65536 };
-	unsigned char *buf = malloc(CAP);
-	uint16_t fc[64];
-	char po[256], pn[256];
-	int fd, n;
+	enum { CHUNK = 4096 };
+	uint16_t fo[64], fn[64];
+	unsigned char *buf;
+	int fd, n, rc = 0;
 
+	/* otherwise copy through a small buffer: a 64 KB block does not fit in
+	   this heap, and malloc failing here made every rename report -1 */
+	buf = malloc(CHUNK + 2);	/* room for the even-length pad byte */
 	if (!buf)
-		return -1;
-	/* read: the very FC the listing produced, so the spelling always matches */
+		return -4;
 	if (name_src_fc)
-		memcpy(fc, name_src_fc, sizeof fc);
+		memcpy(fo, name_src_fc, sizeof fo);
 	else
-		txt_fc(fc, 64, oldn);
-	fd = BFile_Open(fc, BFile_ReadOnly);
-	if (fd >= 0) {
-		n = BFile_Read(fd, buf, CAP - 2, -1);
-		BFile_Close(fd);
-	} else {
-		snprintf(po, sizeof po, "%s\\%s", cur_dir, oldn);
-		FILE *in = open_any(po, "rb");
-		n = -1;
-		if (in) {
-			size_t got = fread(buf, 1, CAP - 2, in);
-			fclose(in);
-			n = (int)got;
-		}
-	}
-	if (n < 0) {
+		txt_fc(fo, 64, oldn);
+	txt_fc(fn, 64, newn);
+	fd = BFile_Open(fo, BFile_ReadOnly);
+	if (fd < 0) {
 		free(buf);
-		return -1;	/* code 1: the source could not be read */
+		return -1;
 	}
-	if (n & 1)
-		buf[n] = 0;		/* pad to an even length */
 	{
-		int sz = (n + 1) & ~1;
+		int total = BFile_Size(fd);
+		int sz = (total + 1) & ~1;
+		BFile_Close(fd);
 		if (sz < 2)
 			sz = 2;
-		txt_fc(fc, 64, newn);
-		BFile_Remove(fc);
-		if (BFile_Create(fc, BFile_File, &sz) == 0
-		    && (fd = BFile_Open(fc, BFile_WriteOnly)) >= 0) {
-			BFile_Write(fd, buf, sz);
-			BFile_Close(fd);
-		} else {
-			/* the stdio side of the volume */
-			snprintf(pn, sizeof pn, "%s\\%s", cur_dir, newn);
-			FILE *out = open_any(pn, "wb");
-			if (!out) {
+		BFile_Remove(fn);
+		if (BFile_Create(fn, BFile_File, &sz) != 0) {
+			free(buf);
+			return -2;
+		}
+		{
+			int in = BFile_Open(fo, BFile_ReadOnly);
+			int out = in >= 0 ? BFile_Open(fn, BFile_WriteOnly) : -1;
+			if (in < 0 || out < 0) {
+				if (in >= 0)
+					BFile_Close(in);
 				free(buf);
-				return -2;	/* code 2: no way to create the target */
+				return -2;
 			}
-			if ((int)fwrite(buf, 1, (size_t)sz, out) != sz) {
-				fclose(out);
-				free(buf);
-				return -3;	/* code 3: the write fell short */
+			n = 0;
+			while (n < total) {
+				int want = total - n < CHUNK ? total - n : CHUNK;
+				int got = BFile_Read(in, buf, want, -1);
+				if (got <= 0) {
+					rc = -3;
+					break;
+				}
+				if (want & 1)
+					buf[got] = 0;	/* keep every write even */
+				BFile_Write(out, buf, (got + 1) & ~1);
+				n += got;
 			}
-			fclose(out);
+			BFile_Close(in);
+			BFile_Close(out);
 		}
 	}
 	free(buf);
+	if (rc != 0)
+		return rc;
 	fs_delete_path(oldn);
 	return 0;
 }
