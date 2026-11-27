@@ -111,6 +111,7 @@
 │  ├─ check_pinyin.py      校验 413 个音节能否正确检索
 │  ├─ emu_run.py           驱动 FxStudio 模拟器跑一串按键并截图
 │  ├─ ime_conv.py          设置里的常用字词：文本 ↔ 计算器用的二进制
+│  ├─ ime_conv_gui.py      上面那个工具的图形界面（python tools\ime_conv_gui.py）
 │  ├─ fontsheet.py         .dlf 字形预览
 │  └─ render1bpp.py        1bpp 位图渲染
 ├─ out/                   发布产物（FXTXT.G1A、修好的字体、截图）
@@ -145,11 +146,12 @@ n × 2 字节         常用字（显示码）
 显示码：可打印 ASCII 用 `字节 - 0x20`，GB2312 用
 `0x100 + (区码 - 0xA1) * 94 + (位码 - 0xA1)`。512 B 足够放满 24 个常用字 + 8 个词。
 
-在电脑上编辑用 `tools/ime_conv.py`：
+在电脑上编辑有两种方式，图形界面最省事：
 
 ```
-python tools\ime_conv.py to-text FXTXT.IME_1 words.txt   # 二进制 → 文本
-python tools\ime_conv.py to-bin  words.txt  FXTXT.IME_1  # 文本 → 二进制
+python tools\ime_conv_gui.py                              # 图形界面
+python tools\ime_conv.py to-text FXTXT.IME_1 words.txt    # 命令行：二进制 → 文本
+python tools\ime_conv.py to-bin  words.txt  FXTXT.IME_1   # 命令行：文本 → 二进制
 ```
 
 文本格式（GB2312/ANSI 保存）：

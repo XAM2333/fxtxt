@@ -2,8 +2,10 @@
 """Convert the FXTXT word list between the plain text form and the binary
 form the calculator stores.
 
-    python tools/ime_conv.py to-bin words.txt FXTXT.IME_1
+    python tools/ime_conv.py to-bin  words.txt FXTXT.IME_1
     python tools/ime_conv.py to-text FXTXT.IME_1 words.txt
+
+There is a GUI for the same job: tools/ime_conv_gui.py
 
 The binary file is what the add-in writes; the text file is for editing on a
 PC.  Any file matching ``*.IME_*`` in ``\\fls0`` is picked up, so the suffix
@@ -39,6 +41,7 @@ MAX_CHARS = 24
 MAX_WORDS = 8
 MAX_WORD_LEN = 12
 MAGIC = b"FIM1"
+ALLOC = 512
 
 
 def encode_text(text):
@@ -58,7 +61,7 @@ def encode_text(text):
             cells.append(b - 0x20)
             i += 1
             continue
-        raise SystemExit("cannot encode byte 0x%02X in %r" % (b, text))
+        raise ValueError("cannot encode byte 0x%02X in %r" % (b, text))
     return cells
 
 
@@ -74,10 +77,9 @@ def decode_cells(cells):
     return out.decode("cp936")
 
 
-def read_text(path):
+def parse_text(raw):
+    """Text form bytes -> (chars, words)."""
     chars, words, sect = [], [], None
-    with open(path, "rb") as f:
-        raw = f.read()
     for line in raw.decode("cp936").splitlines():
         line = line.strip()
         if not line or line.startswith("#"):
@@ -92,47 +94,45 @@ def read_text(path):
         if sect == "chars":
             cells = encode_text(line)
             if len(cells) != 1:
-                raise SystemExit("[chars] entry must be one character: %r" % line)
+                raise ValueError("[chars] entry must be one character: %r" % line)
             chars.append(cells[0])
         elif sect == "words":
             cells = encode_text(line)
             if not 0 < len(cells) <= MAX_WORD_LEN:
-                raise SystemExit("word too long (%d cells): %r" % (len(cells), line))
+                raise ValueError("word too long (%d cells): %r" % (len(cells), line))
             words.append(cells)
         else:
-            raise SystemExit("entry outside [chars]/[words]: %r" % line)
+            raise ValueError("entry outside [chars]/[words]: %r" % line)
     return chars, words
 
 
-def to_bin(text_path, bin_path):
-    chars, words = read_text(text_path)
-    if len(chars) > MAX_CHARS:
-        print("warning: %d characters, the calculator keeps %d" % (len(chars), MAX_CHARS))
-    if len(words) > MAX_WORDS:
-        print("warning: %d words, the calculator keeps %d" % (len(words), MAX_WORDS))
-    chars = chars[:MAX_CHARS]
-    words = words[:MAX_WORDS]
+def render_text(chars, words):
+    lines = ["[chars]"]
+    lines += [decode_cells([c]) for c in chars]
+    lines.append("[words]")
+    lines += [decode_cells(w) for w in words]
+    return ("\n".join(lines) + "\n").encode("cp936")
+
+
+def build_bin(chars, words):
+    chars = list(chars)[:MAX_CHARS]
+    words = list(words)[:MAX_WORDS]
     blob = bytearray(MAGIC)
     blob.append(len(chars))
     for c in chars:
         blob += struct.pack("<H", c)
     blob.append(len(words))
     for w in words:
+        w = list(w)[:MAX_WORD_LEN]
         blob.append(len(w))
         for c in w:
             blob += struct.pack("<H", c)
-    with open(bin_path, "wb") as f:
-        f.write(blob)
-        f.write(b"\0" * (512 - len(blob)))
-    print("%s -> %s : %d chars, %d words, %d bytes of data"
-          % (text_path, bin_path, len(chars), len(words), len(blob)))
+    return blob
 
 
-def to_text(bin_path, text_path):
-    with open(bin_path, "rb") as f:
-        blob = f.read()
+def parse_bin(blob):
     if not blob.startswith(MAGIC):
-        raise SystemExit("%s: not a FIM1 word list" % bin_path)
+        raise ValueError("not a FIM1 word list")
     p = 4
     nchars = blob[p]
     p += 1
@@ -146,23 +146,60 @@ def to_text(bin_path, text_path):
         p += 1
         words.append(list(struct.unpack_from("<%dH" % n, blob, p)))
         p += 2 * n
-    lines = ["[chars]"]
-    lines += [decode_cells([c]) for c in chars]
-    lines.append("[words]")
-    lines += [decode_cells(w) for w in words]
-    with open(text_path, "wb") as f:
-        f.write(("\n".join(lines) + "\n").encode("cp936"))
-    print("%s -> %s : %d chars, %d words" % (bin_path, text_path, len(chars), len(words)))
+    return chars, words
+
+
+def read_file(path):
+    with open(path, "rb") as f:
+        return f.read()
+
+
+def load_any(path):
+    """Load either form: FIM1 header means binary, anything else text."""
+    raw = read_file(path)
+    if raw.startswith(MAGIC):
+        return parse_bin(raw)
+    return parse_text(raw)
+
+
+def save_bin(path, chars, words):
+    blob = build_bin(chars, words)
+    with open(path, "wb") as f:
+        f.write(blob)
+        f.write(b"\0" * (ALLOC - len(blob)))
+    return len(blob)
+
+
+def save_text(path, chars, words):
+    raw = render_text(chars, words)
+    with open(path, "wb") as f:
+        f.write(raw)
+    return len(raw)
 
 
 def main(argv):
     if len(argv) != 4 or argv[1] not in ("to-bin", "to-text"):
         print(__doc__)
         return 2
-    if argv[1] == "to-bin":
-        to_bin(argv[2], argv[3])
-    else:
-        to_text(argv[2], argv[3])
+    src, dst = argv[2], argv[3]
+    try:
+        chars, words = load_any(src)
+        if len(chars) > MAX_CHARS:
+            print("warning: %d characters, the calculator keeps %d"
+                  % (len(chars), MAX_CHARS))
+        if len(words) > MAX_WORDS:
+            print("warning: %d words, the calculator keeps %d"
+                  % (len(words), MAX_WORDS))
+        if argv[1] == "to-bin":
+            n = save_bin(dst, chars, words)
+            print("%s -> %s : %d chars, %d words, %d bytes of data"
+                  % (src, dst, len(chars), len(words), n))
+        else:
+            n = save_text(dst, chars, words)
+            print("%s -> %s : %d chars, %d words, %d bytes of text"
+                  % (src, dst, len(chars), len(words), n))
+    except (ValueError, OSError) as e:
+        raise SystemExit("%s: %s" % (src, e))
     return 0
 
 
