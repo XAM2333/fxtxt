@@ -4725,29 +4725,55 @@ static void set_bar(char const *a, char const *b, char const *c, char const *f)
 static void draw_set(void)
 {
 	static char const *item[5];
-	char line[5][32];
+	static char const *val[5];
+	char cnt[16];
 	ui_clip_x = 128;
-	ui_no_cups = 1;		/* a list needs no F bar, the hint says it all */
 	ui_info_right = 0;
-	item[0] = "\xB7\xB4\xC9\xAB";
-	item[1] = "\xBC\xC6\xCA\xFD\xB5\xA5\xCE\xBB";
-	item[2] = "\xD7\xD6\xB4\xCA";
-	item[3] = "\xB0\xEF\xD6\xFA";
-	item[4] = "\xB9\xD8\xD3\xDA";
-	snprintf(line[0], sizeof line[0], "%s  %s", item[0], set_inv ? "\xBF\xAA" : "\xB9\xD8");
-	snprintf(line[1], sizeof line[1], "%s  %s", item[1], set_unit_lines ? "\xD0\xD0" : "\xD2\xB3");
-	snprintf(line[2], sizeof line[2], "%s  %d/%d", item[2], set_char_n, set_phr_n);
-	snprintf(line[3], sizeof line[3], "%s", item[3]);
-	snprintf(line[4], sizeof line[4], "%s", item[4]);
+	item[0] = "\xB7\xB4\xC9\xAB";		/* 反色 */
+	item[1] = "\xBC\xC6\xCA\xFD\xB5\xA5\xCE\xBB";	/* 计数单位 */
+	item[2] = "\xD7\xD6\xB4\xCA";		/* 字词 */
+	item[3] = "\xB0\xEF\xD6\xFA";		/* 帮助 */
+	item[4] = "\xB9\xD8\xD3\xDA";		/* 关于 */
+	val[0] = set_inv ? "\xBF\xAA" : "\xB9\xD8";
+	val[1] = set_unit_lines ? "\xD0\xD0" : "\xD2\xB3";
+	snprintf(cnt, sizeof cnt, "%d/%d", set_char_n, set_phr_n);
+	val[2] = cnt;
+	val[3] = "";
+	val[4] = "";
+
+	/* the F bar always belongs to the row the cursor is on */
+	for (int i = 0; i < 6; i++)
+		box_lab[i] = NULL;
+	switch (set_row) {
+	case 0:
+		box_lab[0] = "\xB9\xD8";	/* 关 */
+		box_lab[1] = "\xBF\xAA";	/* 开 */
+		break;
+	case 1:
+		box_lab[0] = "\xD2\xB3";	/* 页 */
+		box_lab[1] = "\xD0\xD0";	/* 行 */
+		break;
+	default:
+		box_lab[0] = "\xBD\xF8\xC8\xEB";	/* 进入 */
+		break;
+	}
+	ui_no_cups = 0;
 	ui_title("\xC9\xE8\xD6\xC3");
 	for (int i = 0; i < 5; i++) {
 		int y = CONTENT_Y + i * 9;
 		if (i == set_row)
 			draw_next_icon(2, y + 1);
-		draw_ui(12, y, line[i], 0);
+		draw_ui(12, y, item[i], 0);
+		if (val[i][0]) {
+			int w = ui_width(val[i]);
+			int x = TEXT_W - 4 - w;
+			if (x < 60)
+				x = 60;
+			ui_clip_x = 128;
+			draw_ui(x, y, val[i], 0);
+		}
 	}
-	draw_ui(2, STATUS_Y, "\xC9\xCF\xCF\xC2\xD1\xA1\xD4\xF1\x20\x20\x45\x58\x45\x20\xBD\xF8\xC8\xEB", 0);
-	ui_hints("", status_msg, 0);
+	ui_hints("", status_msg[0] ? status_msg : "\xC9\xCF\xCF\xC2\xD1\xA1\xD4\xF1", 0);
 	dupdate();
 }
 
@@ -4946,7 +4972,22 @@ static void handle_set_key(key_event_t ev)
 		} else if (ev.key == KEY_DOWN) {
 			if (set_row < 4)
 				set_row++;
-		} else if (ev.key == KEY_EXE) {
+		} else if (ev.key == KEY_F1 || ev.key == KEY_F2 || ev.key == KEY_EXE) {
+			int on = (ev.key == KEY_F2);
+			if (set_row == 0 && ev.key != KEY_EXE) {
+				set_inv = on, ui_inv = on;
+				int rc = cfg_save();
+				cfg_load();
+				set_saved(rc == 0 && set_inv == on ? 0 : -1);
+				return;
+			}
+			if (set_row == 1 && ev.key != KEY_EXE) {
+				set_unit_lines = on;
+				int rc = cfg_save();
+				cfg_load();
+				set_saved(rc == 0 && set_unit_lines == on ? 0 : -1);
+				return;
+			}
 			switch (set_row) {
 			case 0: mode = MODE_SET_INV; break;
 			case 1: mode = MODE_SET_UNIT; break;
