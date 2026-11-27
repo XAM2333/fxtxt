@@ -202,7 +202,7 @@ static char ime_name[40];
    has to scan the 9 KB pinyin table while typing */
 #define SET_PY_NONE (-1)
 static signed short set_char_py[SET_CHAR_MAX];
-static signed char phr_py[SET_PHR_MAX][SET_PHR_LEN];
+static signed short phr_py[SET_PHR_MAX][SET_PHR_LEN];
 static void py_cache_lists(void);
 
 static uint16_t kb_cells[24];		/* typed cells (search prompt) */
@@ -271,6 +271,15 @@ static void put_px(int x, int y, int on, int invert)
 		px_on(x, y);
 }
 
+/* the colour that contrasts with a filled bar: paper on the bar */
+static void paper_px(int x, int y)
+{
+	if (ui_inv)
+		px_on(x, y);
+	else
+		px_off(x, y);
+}
+
 /* solid blocks (carets, selection boxes) are ink as well */
 static void ink(int x, int y)
 {
@@ -311,6 +320,11 @@ static void draw_cell(int x, int y, uint16_t cell, int invert)
 	int g = (int)cell - CELL_CJK;
 	if (g < 0 || g >= FONT_GLYPHS)
 		g = '?' - FONT_FIRST;
+	if (invert) {
+		for (int r = 0; r < 8; r++)
+			for (int c = 0; c < 8; c++)
+				ink(x + c, y + r);
+	}
 	blit8(x, y, font_cjk8[g], invert);
 }
 
@@ -464,6 +478,18 @@ static int help_page;	/* which help page is shown, 0..3 */
 
 /* Six cups along the bottom edge (F1..F6): no bottom edge, no gaps, and each
    one carries its own short label. */
+/* hollow right arrow for the page-toggle cup: base 7 px, height 5 px */
+static void draw_next_icon(int x, int y)
+{
+	for (int r = 0; r < 7; r++)
+		ink(x, y + r);		/* the base, 7 px tall */
+	for (int k = 1; k <= 4; k++) {
+		int d = (3 * k + 2) / 4;	/* the two edges meet at the tip */
+		ink(x + k, y + d);
+		ink(x + k, y + 6 - d);
+	}
+}
+
 static void ui_fkeys(void)
 {
 	drect(0, BOX_Y, 127, BOX_Y, INKBAR);          /* top edge */
@@ -608,7 +634,7 @@ static void blit_icon(unsigned char const *rows, int w, int h, int x, int y,
 		for (int c = 0; c < w; c++)
 			if (bits & (1 << (6 - c))) {
 				if (invert)
-					px_off(x + c, y + r);
+					paper_px(x + c, y + r);
 				else
 					ink(x + c, y + r);
 			}
@@ -3053,9 +3079,12 @@ static void draw_view(void)
 		int st = fk_state();
 		for (int i = 0; i < 6; i++)
 			box_lab[i] = fk_lab[st][i];
+		if (st == FS_EDIT1 || st == FS_EDIT2)
+			box_lab[5] = NULL;	/* the cup shows the arrow instead */
 	}
 
 	int caret_x = -1, caret_y = -1;
+	int next_icon = (fk_state() == FS_EDIT1 || fk_state() == FS_EDIT2);
 	int r = rows(), y = CONTENT_Y, row = view_top;
 	for (int i = 0; i < r && row < rows_total; i++, row++) {
 		int p = row_start(row);
@@ -3099,6 +3128,8 @@ static void draw_view(void)
 		         edit_mode);
 		ui_info_right = 0;
 	}
+	if (next_icon)
+		draw_next_icon(112, 57);
 	dupdate();
 }
 
@@ -3257,7 +3288,7 @@ static void py_cache_lists(void)
 		set_char_py[i] = SET_PY_NONE;
 	for (int w = 0; w < SET_PHR_MAX; w++)
 		for (int c = 0; c < SET_PHR_LEN; c++)
-			phr_py[w][c] = (signed char)SET_PY_NONE;
+			phr_py[w][c] = SET_PY_NONE;
 
 #define PY_LOOKUP(cell)                                                       \
 	({                                                                     \
@@ -3279,7 +3310,7 @@ static void py_cache_lists(void)
 		set_char_py[i] = (signed short)PY_LOOKUP(set_chars[i]);
 	for (int w = 0; w < set_phr_n; w++)
 		for (int c = 0; c < set_phr_len[w]; c++)
-			phr_py[w][c] = (signed char)PY_LOOKUP(set_phrs[w][c]);
+			phr_py[w][c] = (signed short)PY_LOOKUP(set_phrs[w][c]);
 #undef PY_LOOKUP
 }
 
@@ -4086,7 +4117,7 @@ static void draw_keyboard(void)
 	} else if (pinyin) {
 		ui_status(py_candidates() ? "F3/F4 \xD1\xA1\xD7\xD6   F5 \xC9\xCF\xC6\xC1" : "F1 \xBB\xBB\xD2\xB3   F6 \xCD\xEA\xB3\xC9");
 	} else if (punct) {
-		ui_status("EXE \xCA\xE4\xC8\xEB   F1 \xBB\xBB\xD2\xB3   F6 \xCD\xEA\xB3\xC9");
+		ui_status("F1 \xBB\xBB\xD2\xB3   F6 \xCD\xEA\xB3\xC9");
 	} else {
 		ui_status("F1 \xBB\xBB\xD2\xB3   F6 \xCD\xEA\xB3\xC9");
 	}
@@ -4759,7 +4790,7 @@ static void handle_set_key(key_event_t ev)
 		return;
 	}
 	if (ev.key == KEY_F6) {
-		help_page = 4;		/* the settings page of the help */
+		help_page = 0;		/* buglist2 15: help always starts on page 1 */
 		help_back = mode;
 		mode = MODE_HELP;
 		return;
@@ -5116,6 +5147,7 @@ static void draw_book(void)
 	box_lab[0] = "\xB4\xE6";
 	box_lab[1] = "\xB6\xC1\xC8\xA1";
 	box_lab[5] = "\xC9\xBE\xB3\xFD";
+	char binfo[16] = { 0 };
 	{
 		/* the page (or line) the reader was on, in the unit the counter
 		   uses -- bug: the slots used to be rows while the title said 行 */
@@ -5123,8 +5155,14 @@ static void draw_book(void)
 		int here = set_unit_lines
 			? chunk_rows + view_top + 1
 			: (chunk_rows + view_top) / rows() + 1;
-		snprintf(head, sizeof head, "\xCA\xE9\xC7\xA9\x20%s%d",
-		         set_unit_lines ? "\xD0\xD0" : "\xD2\xB3", here);
+		int tot = set_unit_lines
+			? total_rows
+			: (total_rows + rows() - 1) / rows();
+		if (tot < 1) tot = 1;
+		if (here < 1) here = 1;
+		if (here > tot) here = tot;
+		snprintf(head, sizeof head, "%s", "\xCA\xE9\xC7\xA9");
+		snprintf(binfo, sizeof binfo, "%d/%d", here, tot);
 		ui_title(head);
 	}
 	for (int i = 0; i < 6; i++) {
@@ -5140,9 +5178,10 @@ static void draw_book(void)
 	}
 	if (book_del_ask)
 		draw_ui(2, CONTENT_Y + 36, "\xC8\xB7\xC8\xCF\xC9\xBE\xB3\xFD\x3F", 0);
-	else
-		draw_ui(2, CONTENT_Y + 36, "\x46\x36\x20\xC9\xBE\xB3\xFD\x20\x20\x20\x45\x58\x49\x54\x20\xCD\xCB\xB3\xF6", 0);
-	ui_status("");		/* the six F boxes */
+	/* no hint line: the F bar already says what the keys do */
+	ui_info_right = 1;
+	ui_hints("", binfo, 0);		/* counter on the right + the F boxes */
+	ui_info_right = 0;
 	dupdate();		/* the loop draws before it waits for a key */
 }
 
@@ -5181,6 +5220,19 @@ static void handle_book_key(key_event_t ev)
 			goto_row(p - 1);
 			mode = MODE_VIEW;
 			return;
+		}
+		book_del_ask = 0;
+	} else if (ev.key == KEY_EXE) {
+		/* buglist2 18: filled slot loads, empty slot stores */
+		int p = book_v[book_sel];
+		if (p > 0) {
+			goto_row(p - 1);
+			mode = MODE_VIEW;
+			return;
+		}
+		if (k >= 0) {
+			pos_tab[k].bm[book_sel] = book_line;
+			book_load();
 		}
 		book_del_ask = 0;
 	} else if (ev.key == KEY_F6) {
@@ -5317,7 +5369,7 @@ static void handle_view_key(key_event_t ev)
 			mode = MODE_BOOK;
 			return;
 		case A_HELP:
-			help_page = (st == FS_READ || st == FS_HIT) ? 1 : 2;
+			help_page = 0;	/* buglist2 15: always the first page */
 			help_back = MODE_VIEW;
 			mode = MODE_HELP;
 			return;
