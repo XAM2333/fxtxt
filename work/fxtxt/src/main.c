@@ -5885,6 +5885,7 @@ static void handle_view_key(key_event_t ev)
 
 static void handle_kb_key(key_event_t ev)
 {
+	uint16_t nb[SET_PHR_LEN];
 	char ch = kb_char(kb_row, kb_col);
 	int pinyin = (kb_page == PAGE_PINYIN);
 	int punct = (kb_page == PAGE_PUNCT);
@@ -5935,6 +5936,17 @@ static void handle_kb_key(key_event_t ev)
 	case KEY_RIGHT:
 		if (punct) {
 			punct_side(ev.key == KEY_RIGHT ? 1 : -1);
+			return;
+		}
+		if (pinyin && py_len > 0) {
+			int n = py_candidates();
+			if (n > 0) {
+				py_pick += (ev.key == KEY_RIGHT) ? 1 : -1;
+				if (py_pick < 0)
+					py_pick = n - 1;
+				if (py_pick >= n)
+					py_pick = 0;
+			}
 			return;
 		}
 		if (ev.key == KEY_LEFT) {
@@ -5997,6 +6009,18 @@ static void handle_kb_key(key_event_t ev)
 					kb_back();
 			}
 			return;
+		}
+		if (pinyin && py_len > 0) {
+			int n = py_candidates();
+			if (n > 0 && py_candidate_cells(py_pick, nb) > 0) {
+				int cl = py_candidate_cells(py_pick, nb);
+				for (int i = 0; i < cl; i++)
+					kb_put(nb[i]);
+				py_reset();
+				if (kb_target == 0 || kb_target == 2)
+					kb_back();
+				return;
+			}
 		}
 		if (pinyin) {
 			if (ch && py_len < 7) {
