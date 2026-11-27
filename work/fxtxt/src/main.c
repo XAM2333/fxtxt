@@ -4775,7 +4775,7 @@ static void draw_set_ime(void)
 	ui_no_cups = 0;
 	ui_info_right = 0;
 	set_bar("\xB3\xA3\xD3\xC3", "\xB6\xCC\xD3\xEF", 0, "\xB0\xEF\xD6\xFA");
-	ui_title_state("\xCA\xE4\xC8\xEB\xB7\xA8", 1);
+	ui_title_state("\xD7\xD6\xB4\xCA", 1);
 	snprintf(line, sizeof line, "\xB3\xA3\xD3\xC3\xD7\xD6  %d", set_char_n);
 	draw_ui(2, CONTENT_Y + 1, line, 0);
 	snprintf(line, sizeof line, "\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF  %d", set_phr_n);
