@@ -3679,6 +3679,9 @@ static void kb_back(void)
    the frequent-character list (2) or the phrase being composed (3). */
 static void kb_back(void);
 static void set_phrase_commit(void);
+static int cfg_save(void);
+static int ime_save(void);
+static void set_saved(int rc);
 static void open_keyboard(int target, int page);
 
 static void kb_put(uint16_t cell)
@@ -3692,8 +3695,7 @@ static void kb_put(uint16_t cell)
 		if (cell && set_char_n < SET_CHAR_MAX) {
 			set_chars[set_char_n++] = cell;
 			set_sel = set_char_n - 1;
-			snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xCC\xED\xBC\xD3");
-			status_sticky = 1;
+			set_saved(ime_save());
 		}
 		return;
 	}
@@ -3899,8 +3901,8 @@ static void draw_help(void)
 	static char const *page5[] = {
 		"\x46\x31\x20\xB7\xB4\xC9\xAB\x20\x20\x20\x46\x32\x20\xCA\xE4\xC8\xEB\xB7\xA8",
 		"\x46\x33\x20\xBC\xC6\xCA\xFD\x20\x20\x20\x46\x36\x20\xB0\xEF\xD6\xFA",
-		"\xB7\xB4\xC9\xAB\xD2\xB3\x20\x46\x31\x20\xB9\xD8\x20\x20\x46\x32\x20\xBF\xAA",
-		"\xBC\xC6\xCA\xFD\xD2\xB3\x20\x46\x31\x20\xD2\xB3\x20\x20\x46\x32\x20\xD0\xD0",
+		"\xC9\xE8\xD6\xC3\xB4\xE6\x20\x46\x58\x54\x58\x54\x2E\x43\x46\x47",
+		"\xD7\xD6\xB4\xCA\xB4\xE6\x20\x46\x58\x54\x58\x54\x2E\x49\x4D\x45\x5F\x31",
 	};
 	static char const *titles[] = { "\xC1\xD0\xB1\xED\xD2\xB3", "\xD4\xC4\xB6\xC1\xD2\xB3", "\xB1\xE0\xBC\xAD\xD2\xB3", "\xB2\xE9\xD5\xD2\xD2\xB3", "\xC9\xE8\xD6\xC3\xD2\xB3" };
 	char const **pages[5];
@@ -3958,6 +3960,226 @@ static int gb_cells(char const *s, uint16_t *out, int cap)
 	return n;
 }
 
+/*=== settings and word-list files =========================================
+
+   Two plain text files in the same folder as the documents, so a PC can edit
+   them and copy them back:
+
+     \\fls0\FXTXT.CFG     invert=0|1 / unit=page|line            (ASCII)
+     \\fls0\FXTXT.IME_1   [chars] and [words] sections            (GB2312)
+
+   Both are rewritten in place; a BFile is only created when it does not exist
+   yet, because recreating files in \fls0 has dropped the add-in list here. */
+
+#define CFG_FILE "FXTXT.CFG"
+#define IME_FILE "FXTXT.IME_1"
+#define CFG_ALLOC 128 		/* bytes reserved at creation */
+#define IME_ALLOC 4096		/* the word list is allocated big on purpose: it is
+				   the file to watch when testing how large a file
+				   \\fls0 tolerates */
+
+static int txt_fc(uint16_t *fc, int cap, char const *name)
+{
+	char p[48];
+	snprintf(p, sizeof p, "\\\\fls0\\%s", name);
+	int m = 0;
+	for (int i = 0; p[i] && m < cap - 1; i++)
+		fc[m++] = (unsigned char)p[i];
+	fc[m] = 0;
+	return m;
+}
+
+static int txt_load(char const *name, char *buf, int cap)
+{
+	uint16_t fc[48];
+	if (!txt_fc(fc, 48, name))
+		return -1;
+	int fd = BFile_Open(fc, BFile_ReadOnly);
+	if (fd < 0) {
+		/* stdio fallback for the emulator's image */
+		char p[48];
+		FILE *f;
+		snprintf(p, sizeof p, "\\\\fls0\\%s", name);
+		f = fopen(p, "rb");
+		if (!f) {
+			snprintf(p, sizeof p, "/fls0/%s", name);
+			f = fopen(p, "rb");
+		}
+		if (!f)
+			return -1;
+		int n = (int)fread(buf, 1, (size_t)(cap - 1), f);
+		fclose(f);
+		if (n < 0)
+			return -1;
+		buf[n] = 0;
+		return n;
+	}
+	int n = BFile_Read(fd, buf, cap - 1, 0);
+	BFile_Close(fd);
+	if (n < 0 || n >= cap)
+		n = 0;
+	buf[n] = 0;
+	return n;
+}
+
+/* last resort for the emulator image, where BFile files are not always
+   visible to the host: plain stdio into /fls0 */
+static int txt_save_stdio(char const *name, char const *data, int len)
+{
+	char p[48];
+	FILE *f;
+
+	snprintf(p, sizeof p, "\\\\fls0\\%s", name);
+	f = fopen(p, "wb");
+	if (!f)
+		return -1;
+	int w = (int)fwrite(data, 1, (size_t)len, f);
+	fputc(0, f);
+	fclose(f);
+	return w == len ? 0 : -1;
+}
+
+static int txt_save(char const *name, char const *data, int len, int alloc)
+{
+	uint16_t fc[48];
+	if (!txt_fc(fc, 48, name))
+		return -1;
+	int fd = BFile_Open(fc, BFile_ReadWrite);
+	if (fd >= 0) {
+		if (BFile_Size(fd) < len + 2) {
+			BFile_Close(fd);
+			fd = -1;
+		} else {
+			BFile_Seek(fd, 0);
+		}
+	}
+	if (fd < 0) {
+		int sz = alloc > len + 2 ? alloc : len + 2;
+		if (BFile_Create(fc, BFile_File, &sz) < 0)
+			return txt_save_stdio(name, data, len);
+		fd = BFile_Open(fc, BFile_WriteOnly);
+		if (fd < 0)
+			return txt_save_stdio(name, data, len);
+	}
+	int w = BFile_Write(fd, data, len);
+	char z = 0;
+	BFile_Write(fd, &z, 1);		/* stop the reader after our text */
+	BFile_Close(fd);
+	return w == len ? 0 : -1;
+}
+
+static int cfg_save(void)
+{
+	char b[64];
+	int n = snprintf(b, sizeof b, "invert=%d\nunit=%s\n",
+	                 set_inv ? 1 : 0, set_unit_lines ? "line" : "page");
+	return txt_save(CFG_FILE, b, n > 0 ? n : 0, CFG_ALLOC);
+}
+
+static void cfg_load(void)
+{
+	char b[192];
+	if (txt_load(CFG_FILE, b, sizeof b) <= 0)
+		return;
+	char *p = b;
+	while (*p) {
+		char *e = p;
+		while (*e && *e != '\n' && *e != '\r')
+			e++;
+		char keep = *e;
+		*e = 0;
+		if (!strncmp(p, "invert=", 7))
+			set_inv = atoi(p + 7) ? 1 : 0;
+		else if (!strncmp(p, "unit=", 5))
+			set_unit_lines = !strncmp(p + 5, "line", 4);
+		if (!keep)
+			break;
+		p = e + 1;
+	}
+	ui_inv = set_inv;
+}
+
+static void cell_to_gb(uint16_t cell, char *out)
+{
+	if (cell < CELL_CJK) {
+		out[0] = (char)(cell + 0x20);
+		out[1] = 0;
+		return;
+	}
+	int g = (int)cell - CELL_CJK;
+	out[0] = (char)(0xA1 + g / 94);
+	out[1] = (char)(0xA1 + g % 94);
+	out[2] = 0;
+}
+
+static int ime_save(void)
+{
+	char b[448];
+	int n = snprintf(b, sizeof b, "FXTXT ime 1\n[chars]\n");
+	for (int i = 0; i < set_char_n && n < (int)sizeof b - 8; i++) {
+		char g[4];
+		cell_to_gb(set_chars[i], g);
+		n += snprintf(b + n, sizeof b - n, "%s\n", g);
+	}
+	n += snprintf(b + n, sizeof b - n, "[words]\n");
+	for (int i = 0; i < set_phr_n && n < (int)sizeof b - 8; i++) {
+		for (int k = 0; k < set_phr_len[i] && n < (int)sizeof b - 8; k++) {
+			char g[4];
+			cell_to_gb(set_phrs[i][k], g);
+			n += snprintf(b + n, sizeof b - n, "%s", g);
+		}
+		n += snprintf(b + n, sizeof b - n, "\n");
+	}
+	return txt_save(IME_FILE, b, n, IME_ALLOC);
+}
+
+static void ime_load(void)
+{
+	char b[512];
+	if (txt_load(IME_FILE, b, sizeof b) <= 0)
+		return;
+	int sect = 0;		/* 0 none, 1 chars, 2 words */
+	char *p = b;
+	while (*p) {
+		char *e = p;
+		while (*e && *e != '\n' && *e != '\r')
+			e++;
+		char keep = *e;
+		*e = 0;
+		if (!strcmp(p, "[chars]")) {
+			sect = 1;
+		} else if (!strcmp(p, "[words]")) {
+			sect = 2;
+		} else if (*p && *p != '#' && *(unsigned char *)p >= 0x20) {
+			if (sect == 1) {
+				uint16_t c[1];
+				if (gb_cells(p, c, 1) > 0 && set_char_n < SET_CHAR_MAX)
+					set_chars[set_char_n++] = c[0];
+			} else if (sect == 2) {
+				uint16_t c[SET_PHR_LEN];
+				int k = gb_cells(p, c, SET_PHR_LEN);
+				if (k > 0 && set_phr_n < SET_PHR_MAX) {
+					for (int i = 0; i < k; i++)
+						set_phrs[set_phr_n][i] = c[i];
+					set_phr_len[set_phr_n] = k;
+					set_phr_n++;
+				}
+			}
+		}
+		if (!keep)
+			break;
+		p = e + 1;
+	}
+}
+
+/* say whether a save landed: the settings pages have no other feedback */
+static void set_saved(int rc)
+{
+	snprintf(status_msg, sizeof status_msg,
+	         rc == 0 ? "\xD2\xD1\xB1\xA3\xB4\xE6" : "\xB1\xA3\xB4\xE6\xCA\xA7\xB0\xDC");
+	status_sticky = 1;
+}
+
 static void set_defaults(void)
 {
 	/* start empty: the lists are the user's own, nothing is preloaded */
@@ -3975,8 +4197,7 @@ static void set_phrase_commit(void)
 		set_phr_len[set_phr_n] = phr_buf_n;
 		set_phr_n++;
 		set_sel = set_phr_n - 1;
-		snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xCC\xED\xBC\xD3");
-		status_sticky = 1;
+		set_saved(ime_save());
 	}
 	phr_buf_n = 0;
 }
@@ -4046,7 +4267,7 @@ static void draw_set_inv(void)
 	ui_title("\xCF\xD4\xCA\xBE\xB7\xB4\xC9\xAB");
 	draw_ui(2, CONTENT_Y + 1, "\xCF\xD4\xCA\xBE\xB7\xB4\xC9\xAB", 0);
 	draw_ui(2, CONTENT_Y + 13, set_inv ? "\xB5\xB1\xC7\xB0\x20\xBF\xAA" : "\xB5\xB1\xC7\xB0\x20\xB9\xD8", 0);
-	draw_ui(2, CONTENT_Y + 30, "\x46\x31\x20\xB9\xD8\x20\x20\x20\x46\x32\x20\xBF\xAA", 0);
+	draw_ui(2, CONTENT_Y + 22, "\x46\x31\x20\xB9\xD8\x20\x20\x20\x46\x32\x20\xBF\xAA", 0);
 	ui_hints("", "", 0);
 	dupdate();
 }
@@ -4060,7 +4281,7 @@ static void draw_set_unit(void)
 	ui_title("\xBC\xC6\xCA\xFD\xB5\xA5\xCE\xBB");
 	draw_ui(2, CONTENT_Y + 1, "\xD4\xC4\xB6\xC1\xD2\xB3\xBC\xC6\xCA\xFD", 0);
 	draw_ui(2, CONTENT_Y + 13, set_unit_lines ? "\xB5\xB1\xC7\xB0\x20\xD0\xD0" : "\xB5\xB1\xC7\xB0\x20\xD2\xB3", 0);
-	draw_ui(2, CONTENT_Y + 30, "\x46\x31\x20\xD2\xB3\x20\x20\x20\x46\x32\x20\xD0\xD0", 0);
+	draw_ui(2, CONTENT_Y + 22, "\x46\x31\x20\xD2\xB3\x20\x20\x20\x46\x32\x20\xD0\xD0", 0);
 	ui_hints("", "", 0);
 	dupdate();
 }
@@ -4200,17 +4421,31 @@ static void handle_set_key(key_event_t ev)
 		return;
 	}
 	if (mode == MODE_SET_INV) {
-		if (ev.key == KEY_F1)
+		if (ev.key == KEY_F1) {
 			set_inv = 0, ui_inv = 0;
-		else if (ev.key == KEY_F2)
+			int rc = cfg_save();
+			cfg_load();
+			set_saved(rc == 0 && !set_inv ? 0 : -1);
+		} else if (ev.key == KEY_F2) {
 			set_inv = 1, ui_inv = 1;
+			int rc = cfg_save();
+			cfg_load();
+			set_saved(rc == 0 && set_inv ? 0 : -1);
+		}
 		return;
 	}
 	if (mode == MODE_SET_UNIT) {
-		if (ev.key == KEY_F1)
+		if (ev.key == KEY_F1) {
 			set_unit_lines = 0;
-		else if (ev.key == KEY_F2)
+			int rc = cfg_save();
+			cfg_load();
+			set_saved(rc == 0 && !set_unit_lines ? 0 : -1);
+		} else if (ev.key == KEY_F2) {
 			set_unit_lines = 1;
+			int rc = cfg_save();
+			cfg_load();
+			set_saved(rc == 0 && set_unit_lines ? 0 : -1);
+		}
 		return;
 	}
 	if (mode == MODE_SET_IME) {
@@ -4250,6 +4485,7 @@ static void handle_set_key(key_event_t ev)
 				set_char_n--;
 				if (set_sel >= set_char_n && set_sel > 0)
 					set_sel--;
+				set_saved(ime_save());
 			}
 		}
 		return;
@@ -4278,6 +4514,7 @@ static void handle_set_key(key_event_t ev)
 				set_phr_n--;
 				if (set_sel >= set_phr_n && set_sel > 0)
 					set_sel--;
+				set_saved(ime_save());
 			}
 		}
 		return;
@@ -5469,6 +5706,8 @@ have_memory:
 	if (!rec_buf)
 		rec_buf = malloc((size_t)RECENT_MAX * RECENT_LEN);
 	set_defaults();		/* frequent characters */
+	cfg_load();		/* settings come from \\fls0\\FXTXT.CFG */
+	ime_load();		/* word list from \\fls0\\FXTXT.IME_1 */
 	ui_inv = set_inv;
 	app_ready = 1;
 
