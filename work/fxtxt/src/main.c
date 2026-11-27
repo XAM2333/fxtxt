@@ -1306,6 +1306,9 @@ static void fs_delete_path(char const *name)
 	(void)f;
 }
 
+static char *rec_buf;	/* RECENT_MAX * RECENT_LEN, malloc'd */
+static int rec_n;
+
 /*=== buffer lifetime ======================================================
 
    With gint_setrestart(1) the add-in can be parked in the OS menu and come
@@ -1321,6 +1324,15 @@ static void app_release(void)
 	free(chunk_off);
 	free(chunk_r0);
 	free(chunk_l0);
+	free(names);
+	free(names_fc);
+	free(is_dir);
+	free(rec_buf);
+	free(pos_tab);
+	rec_buf = NULL;
+	rec_n = 0;
+	pos_tab = NULL;
+	pos_n = 0;
 	cells = NULL;
 	rawbuf = NULL;
 	chunk_off = NULL;
@@ -1336,6 +1348,7 @@ static void app_release(void)
 	name_count = 0;
 	app_ready = 0;
 }
+
 
 /*=== storage memory =======================================================*/
 
@@ -2630,9 +2643,7 @@ static void fs_make_demo(void)
 #define RECENT_MAX 4
 #define RECENT_LEN 40
 
-static char *rec_buf;			/* RECENT_MAX * RECENT_LEN, malloc'd */
 static int rec_line[RECENT_MAX];
-static int rec_n;
 static int list_recent;			/* the list page shows the recents */
 static int rec_sel;
 
@@ -3027,6 +3038,8 @@ static void draw_view(void)
 		if (edit_mode && row == crow && ccell >= q &&
 		    (q >= ncell || cells[q] == CELL_NL))
 			caretx = x;
+		if (caretx > 0)
+			caretx--;	/* sit on the glyph's left bearing, not its origin */
 		if (caretx >= 0 && caretx < TEXT_W)
 			caret_x = caretx, caret_y = y;
 		y += lh();
