@@ -473,6 +473,7 @@ static int book_sel;
 static int book_v[6];
 static int book_del_ask;
 static int book_ask_sel;	/* snapshot, drawn every frame */
+static int leave_to_list;	/* 0: back to the reader, 1: to the list */
 static int book_line;	/* line captured when the bookmark page opens */
 static int help_page;	/* which help page is shown, 0..3 */
 
@@ -5277,6 +5278,7 @@ static void enter_edit(void)
 static void leave_edit(void)
 {
 	if (dirty) {
+		leave_to_list = 0;
 		confirm_kind = 1;
 		mode = MODE_CONFIRM;
 		return;
@@ -5481,11 +5483,20 @@ static void handle_view_key(key_event_t ev)
 	switch (ev.key) {
 	case KEY_EXIT:
 		if (edit_mode && dirty) {
+			leave_to_list = ev.shift;
 			confirm_kind = 1;
 			mode = MODE_CONFIRM;
 			return;
 		}
-		/* leave editing for good: the next file opens in the reader */
+		if (edit_mode && !ev.shift) {
+			/* buglist2 17: EXIT leaves the editor but stays in the
+			   reader, on the same page */
+			edit_mode = 0;
+			fbar_page = 0;
+			py_reset();
+			return;
+		}
+		/* SHIFT+EXIT, or the reader itself: back to the list */
 		edit_mode = 0;
 		fbar_page = 0;
 		search_n = 0;
@@ -5751,11 +5762,15 @@ static void draw_confirm(void)
 		return;
 	}
 	if (confirm_kind == 1) {
+		ui_no_cups = 0;
+		box_lab[0] = "\xBC\xCC\xD0\xF8";	/* 继续 */
+		box_lab[1] = "\xB4\xE6\xCD\xCB";	/* 存退 */
+		box_lab[5] = "\xB7\xC5\xC6\xFA";	/* 放弃 */
 		ui_title("\xCE\xB4\xB1\xA3\xB4\xE6");
-		draw_ui(2, CONTENT_Y + 2, "\xB7\xC5\xC6\xFA\xD0\xDE\xB8\xC4\xA3\xBF", 0);
-		draw_ui(2, CONTENT_Y + 12, "EXE\xB7\xC5\xC6\xFA", 0);
-		draw_ui(2, CONTENT_Y + 22, "EXIT\xBC\xCC\xD0\xF8\xB1\xE0\xBC\xAD", 0);
-		draw_ui(2, STATUS_Y, "\x45\x58\x45\x20\xB7\xC5\xC6\xFA\x20\x20\x20\x45\x58\x49\x54\x20\xBC\xCC\xD0\xF8\xB1\xE0\xBC\xAD", 0);
+		draw_ui(2, CONTENT_Y + 4,
+		        leave_to_list ? "\xB7\xC5\xC6\xFA\xD0\xDE\xB8\xC4\xB2\xA2\xCD\xCB\xB3\xF6\xCE\xC4\xB5\xB5\xA3\xBF"
+		                      : "\xB7\xC5\xC6\xFA\xD0\xDE\xB8\xC4\xB2\xA2\xBB\xD8\xB5\xBD\xD4\xC4\xB6\xC1\xC4\xA3\xCA\xBD\xA3\xBF", 0);
+		ui_status("");		/* the F1 / F2 / F6 cups */
 		dupdate();
 		return;
 	}
@@ -5786,14 +5801,31 @@ static void handle_confirm_key(key_event_t ev)
 		return;
 	}
 	if (confirm_kind == 1) {
-		if (ev.key == KEY_EXE) {
+		/* buglist2 9 / 10: F1 keeps editing, F2 saves and leaves,
+		   F6 (or EXE / EXIT) throws the changes away */
+		if (ev.key == KEY_F1 || ev.key == KEY_EXE || ev.key == KEY_EXIT) {
+			mode = MODE_VIEW;	/* straight back into the editor */
+			return;
+		}
+		if (ev.key == KEY_F2) {
+			strncpy(relist_name, names[list_sel], NAME_MAX_L);
+			relist_name[NAME_MAX_L] = 0;
+			gint_world_switch(GINT_CALL(fs_write_current));
 			dirty = 0;
-			edit_mode = 0;
-			py_reset();
+			gint_world_switch(GINT_CALL(fs_relist_keep));
+		} else if (ev.key != KEY_F6) {
+			return;		/* any other key stays on this page */
+		} else {
+			dirty = 0;
 			gint_world_switch(GINT_CALL(fs_read_current));
-			mode = MODE_VIEW;
-			apply_saved_pos();	/* jump back to where this file was left */
-		} else if (ev.key == KEY_EXIT) {
+		}
+		edit_mode = 0;
+		fbar_page = 0;
+		py_reset();
+		if (leave_to_list) {
+			gint_world_switch(GINT_CALL(fs_save_state));
+			mode = MODE_LIST;
+		} else {
 			mode = MODE_VIEW;
 		}
 		return;
