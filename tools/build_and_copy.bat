@@ -1,7 +1,7 @@
 @echo off
 rem Build FXTXT and drop the .g1a everywhere it is needed:
 rem   out\FXTXT.G1A   local deliverable
-rem   H:\FXTXT.G1A   calculator storage (silently skipped when absent)
+rem   G:\FXTXT.G1A   calculator storage (falls back to H:, silently skipped)
 setlocal
 cd /d %~dp0..
 
@@ -15,12 +15,16 @@ if errorlevel 1 goto fail
 
 copy /y "work\fxtxt\out\artifacts\addin.g1a" "out\FXTXT.G1A" >nul
 
-if exist H:\ (
+if exist G:\ (
+    copy /y "out\FXTXT.G1A" "G:\FXTXT.G1A" >nul
+    if errorlevel 1 echo [build] copy to G: failed & goto fail
+    echo [build] copied to G:\FXTXT.G1A
+) else if exist H:\ (
     copy /y "out\FXTXT.G1A" "H:\FXTXT.G1A" >nul
     if errorlevel 1 echo [build] copy to H: failed & goto fail
     echo [build] copied to H:\FXTXT.G1A
 ) else (
-    echo [build] H: not mounted, skipped
+    echo [build] calculator not mounted, skipped
 )
 
 for %%A in (out\FXTXT.G1A) do echo [build] ok, %%~zA bytes

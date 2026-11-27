@@ -1885,12 +1885,15 @@ static int name_rename;		/* prompt is renaming the selected file */
 
 /* gint's fx port has no BFile_Rename syscall, so a rename is a copy followed
    by a delete. Returns 0 on success, -2 when the file is too large to copy. */
-static int name_rename_copy(char const *oldn, char const *newn)
+/* Copy one file to a new name inside the current folder and remove the old
+   one.  Paths use backslashes throughout: the BFile layer wants them and a
+   mixed "\\fls0/NAME.TXT" is not something to rely on. */
+static int name_copy_file(char const *oldn, char const *newn)
 {
 	char po[256], pn[256];
 	enum { CAP = 65536 };
-	snprintf(po, sizeof po, "%s/%s", cur_dir, oldn);
-	snprintf(pn, sizeof pn, "%s/%s", cur_dir, newn);
+	snprintf(po, sizeof po, "%s\\%s", cur_dir, oldn);
+	snprintf(pn, sizeof pn, "%s\\%s", cur_dir, newn);
 
 	FILE *in = open_any(po, "rb");
 	if (!in)
@@ -1923,6 +1926,43 @@ static int name_rename_copy(char const *oldn, char const *newn)
 		fclose(chk);
 	}
 	fs_delete_path(oldn);
+	return 0;
+}
+
+static int name_rename_copy(char const *oldn, char const *newn)
+{
+	int rc = name_copy_file(oldn, newn);
+	char op[NAME_MAX_L + 6], np[NAME_MAX_L + 6];
+	size_t n;
+
+	if (rc != 0)
+		return rc;
+	/* the .POS sidecar belongs to the document, so it moves with it */
+	n = strlen(oldn);
+	if (n > NAME_MAX_L)
+		n = NAME_MAX_L;
+	memcpy(op, oldn, n);
+	op[n] = 0;
+	{
+		char *dot = strrchr(op, '.');
+		if (dot && dot > op)
+			strcpy(dot, ".POS");
+		else
+			strcpy(op + n, ".POS");
+	}
+	n = strlen(newn);
+	if (n > NAME_MAX_L)
+		n = NAME_MAX_L;
+	memcpy(np, newn, n);
+	np[n] = 0;
+	{
+		char *dot = strrchr(np, '.');
+		if (dot && dot > np)
+			strcpy(dot, ".POS");
+		else
+			strcpy(np + n, ".POS");
+	}
+	name_copy_file(op, np);	/* a missing sidecar simply fails quietly */
 	return 0;
 }
 
