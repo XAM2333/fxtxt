@@ -144,6 +144,7 @@ static void goto_row(int grow);
 static void goto_line(int line);
 static int global_row(void);
 static int global_line(void);
+static int page_total(void);
 static void page_step(int dir);
 static void open_goto(void);
 static void handle_goto_key(key_event_t ev);
@@ -159,6 +160,8 @@ static int shift_armed;
 static int alpha_armed;		/* capitals (name prompt F1) */
 static int cn_mode = 1;		/* 1 = pinyin, 0 = direct letters */
 static int dirty;
+static int text_gen;		/* bumped by every edit */
+static int totals_gen;		/* text_gen the totals were built from */
 
 #define NAME_FC_MAX 64
 static char (*names)[NAME_MAX_L + 1];
@@ -2531,6 +2534,7 @@ static void goto_line(int line)
 static void page_step(int dir)
 {
 	int g = chunk_rows + view_top;
+	int last = (page_total() - 1) * rows();
 
 	if (dir < 0) {
 		if (g <= 0)
@@ -2538,7 +2542,7 @@ static void page_step(int dir)
 		goto_row(((g - 1) / rows()) * rows());
 	} else {
 		int next = (g / rows() + 1) * rows();
-		if (next > total_rows - 1)
+		if (next > last)
 			return;
 		goto_row(next);
 	}
@@ -3025,9 +3029,25 @@ static void comp_draw(void)
 	}
 }
 
+/* How many pages the reader should show.  The empty row that a trailing
+   newline leaves behind is not a page of its own, otherwise pressing down on
+   a full last page opens a blank one that is counted (buglist2 27). */
+static int page_total(void)
+{
+	int rr = total_rows;
+	if (tail_row() && rr > 1 && rr % rows() == 1)
+		rr--;
+	return (rr + rows() - 1) / rows();
+}
+
 static void draw_view(void)
 {
 	ui_no_cups = 0;
+	if (chunk_n <= 1 && totals_gen != text_gen) {
+		total_rows = row_count() + tail_row();
+		total_lines = line_count() + tail_row();
+		totals_gen = text_gen;
+	}
 	int rows_total = row_count() + tail_row();
 	{
 		int lim = rows_total - 1;	/* the last page may be short */
@@ -3054,7 +3074,7 @@ static void draw_view(void)
 			snprintf(info, sizeof info, "%d/%d", ln, tl);
 		} else {
 			int pg = (chunk_rows + view_top) / rows() + 1;
-			int tp = (total_rows + rows() - 1) / rows();
+			int tp = page_total();
 			if (tp < 1) tp = 1;
 			snprintf(info, sizeof info, "%d/%d", pg, tp);
 		}
@@ -3874,6 +3894,7 @@ static void text_insert(uint16_t cell)
 	ncell++;
 	cur_col++;
 	dirty = 1;
+	text_gen++;
 	undo_push(0, off, cell);
 }
 
@@ -3890,6 +3911,7 @@ static void text_newline(void)
 	cur_line++;
 	cur_col = 0;
 	dirty = 1;
+	text_gen++;
 	undo_push(0, off, CELL_NL);
 }
 
@@ -5156,9 +5178,7 @@ static void draw_book(void)
 		int here = set_unit_lines
 			? chunk_rows + view_top + 1
 			: (chunk_rows + view_top) / rows() + 1;
-		int tot = set_unit_lines
-			? total_rows
-			: (total_rows + rows() - 1) / rows();
+		int tot = set_unit_lines ? total_rows : page_total();
 		if (tot < 1) tot = 1;
 		if (here < 1) here = 1;
 		if (here > tot) here = tot;
