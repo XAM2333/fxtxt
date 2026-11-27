@@ -4693,6 +4693,7 @@ static void open_settings(void)
 	set_doc = (ncell > 0);
 	status_msg[0] = 0;
 	set_sel = 0;
+	set_row = 0;		/* every visit starts on the first row */
 	mode = MODE_SET;
 }
 
