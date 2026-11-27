@@ -110,12 +110,62 @@
 │  ├─ patchdlf.py          输出修好括号字形的 .dlf
 │  ├─ check_pinyin.py      校验 413 个音节能否正确检索
 │  ├─ emu_run.py           驱动 FxStudio 模拟器跑一串按键并截图
+│  ├─ ime_conv.py          设置里的常用字词：文本 ↔ 计算器用的二进制
 │  ├─ fontsheet.py         .dlf 字形预览
 │  └─ render1bpp.py        1bpp 位图渲染
 ├─ out/                   发布产物（FXTXT.G1A、修好的字体、截图）
 ├─ FONT8.dlf / FONT12.dlf 源字库（见「许可」）
 └─ icon.png               图标源图
 ```
+
+## 存储文件
+
+机内只写两个文件，都放在 `\fls0` 根目录，只在用户改设置 / 加减字词时写一次：
+
+| 文件 | 格式 | 大小 | 内容 |
+|---|---|---|---|
+| `FXTXT.CFG` | 纯文本 ASCII | 128 B | `invert=0\|1`、`unit=page\|line` |
+| `*.IME_*` | 二进制 | 512 B | 常用字 / 常用词，见下 |
+
+字词库的文件名是 `*.IME_*`——下划线后面随便写（`FXTXT.IME_1`、`FXTXT.IME_mine`、
+`WORDS.IME_a` 都行），程序按通配符找第一个匹配的文件；文件已存在就原地改写，
+不会删了重建（在这台机器上反复 `BFile_Create` 会让 add-in 列表消失）。
+保存后程序会把文件读回来校验，页面显示「已保存」才算真的落地。
+
+二进制格式（小端）：
+
+```
+"FIM1"             4 字节
+字数 n             1 字节
+n × 2 字节         常用字（显示码）
+词数 m             1 字节
+每个词：长度 L（1 字节）+ L × 2 字节
+```
+
+显示码：可打印 ASCII 用 `字节 - 0x20`，GB2312 用
+`0x100 + (区码 - 0xA1) * 94 + (位码 - 0xA1)`。512 B 足够放满 24 个常用字 + 8 个词。
+
+在电脑上编辑用 `tools/ime_conv.py`：
+
+```
+python tools\ime_conv.py to-text FXTXT.IME_1 words.txt   # 二进制 → 文本
+python tools\ime_conv.py to-bin  words.txt  FXTXT.IME_1  # 文本 → 二进制
+```
+
+文本格式（GB2312/ANSI 保存）：
+
+```
+# 注释
+[chars]
+的
+一
+[words]
+您好
+谢谢
+```
+
+把转换好的文件拷回 `\fls0` 即可；程序也直接认这种文本格式（不以 `FIM1` 开头就按
+文本解析），所以不转换、只拷一个文本文件也能用。
 
 ## 构建
 

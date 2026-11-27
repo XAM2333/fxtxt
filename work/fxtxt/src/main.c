@@ -3681,6 +3681,9 @@ static void kb_back(void);
 static void set_phrase_commit(void);
 static int cfg_save(void);
 static int ime_save(void);
+/* the word list may be called FXTXT.IME_1, FXTXT.IME_mine, WORDS.IME_a ...
+   anything that matches *.IME_*; find whichever one is there */
+static int ime_find(char *name, int cap);
 static void set_saved(int rc);
 static void open_keyboard(int target, int page);
 
@@ -3902,7 +3905,7 @@ static void draw_help(void)
 		"\x46\x31\x20\xB7\xB4\xC9\xAB\x20\x20\x20\x46\x32\x20\xCA\xE4\xC8\xEB\xB7\xA8",
 		"\x46\x33\x20\xBC\xC6\xCA\xFD\x20\x20\x20\x46\x36\x20\xB0\xEF\xD6\xFA",
 		"\xC9\xE8\xD6\xC3\xB4\xE6\x20\x46\x58\x54\x58\x54\x2E\x43\x46\x47",
-		"\xD7\xD6\xB4\xCA\xB4\xE6\x20\x46\x58\x54\x58\x54\x2E\x49\x4D\x45\x5F\x31",
+		"\xD7\xD6\xB4\xCA\xB4\xE6\x20\x2A\x2E\x49\x4D\x45\x5F\x78",
 	};
 	static char const *titles[] = { "\xC1\xD0\xB1\xED\xD2\xB3", "\xD4\xC4\xB6\xC1\xD2\xB3", "\xB1\xE0\xBC\xAD\xD2\xB3", "\xB2\xE9\xD5\xD2\xD2\xB3", "\xC9\xE8\xD6\xC3\xD2\xB3" };
 	char const **pages[5];
@@ -3972,11 +3975,11 @@ static int gb_cells(char const *s, uint16_t *out, int cap)
    yet, because recreating files in \fls0 has dropped the add-in list here. */
 
 #define CFG_FILE "FXTXT.CFG"
-#define IME_FILE "FXTXT.IME_1"
+#define IME_FILE "FXTXT.IME_1"	/* created when no *.IME_* exists yet */
+#define IME_PAT  "*.IME_*"	/* any suffix after the underscore */
+#define IME_MAGIC "FIM1"
 #define CFG_ALLOC 128 		/* bytes reserved at creation */
-#define IME_ALLOC 4096		/* the word list is allocated big on purpose: it is
-				   the file to watch when testing how large a file
-				   \\fls0 tolerates */
+#define IME_ALLOC 512		/* binary word list: 4+1+48 + 8*(1+24) = 253 max */
 
 static int txt_fc(uint16_t *fc, int cap, char const *name)
 {
@@ -4068,6 +4071,28 @@ static int txt_save(char const *name, char const *data, int len, int alloc)
 	return w == len ? 0 : -1;
 }
 
+static int ime_find(char *name, int cap)
+{
+	uint16_t pat[40], found[96];
+	struct BFile_FileInfo fi;
+	int h = 0, n = 0, last = -1, m = 0;
+	char const *s = "\\\\fls0\\" IME_PAT;
+
+	for (int i = 0; s[i] && n < 39; i++)
+		pat[n++] = (unsigned char)s[i];
+	pat[n] = 0;
+	if (BFile_FindFirst(pat, &h, found, &fi) < 0)
+		return -1;
+	BFile_FindClose(h);
+	for (int i = 0; found[i]; i++)
+		if (found[i] == '\\')
+			last = i;
+	for (int i = last + 1; found[i] && m < cap - 1; i++)
+		name[m++] = (char)found[i];
+	name[m] = 0;
+	return m > 0 ? 0 : -1;
+}
+
 static int cfg_save(void)
 {
 	char b[64];
@@ -4114,30 +4139,41 @@ static void cell_to_gb(uint16_t cell, char *out)
 
 static int ime_save(void)
 {
-	char b[448];
-	int n = snprintf(b, sizeof b, "FXTXT ime 1\n[chars]\n");
-	for (int i = 0; i < set_char_n && n < (int)sizeof b - 8; i++) {
-		char g[4];
-		cell_to_gb(set_chars[i], g);
-		n += snprintf(b + n, sizeof b - n, "%s\n", g);
+	/* FIM1 | nchars | u16[nchars] | nwords | (u8 n | u16[n]) * nwords
+	   little endian display cells: keeps the 24+8 entry lists in ~250 B */
+	unsigned char b[IME_ALLOC];
+	char name[40];
+	int n = 0;
+
+	memcpy(b, IME_MAGIC, 4);
+	n = 4;
+	b[n++] = (unsigned char)set_char_n;
+	for (int i = 0; i < set_char_n; i++) {
+		b[n++] = (unsigned char)(set_chars[i] & 0xFF);
+		b[n++] = (unsigned char)(set_chars[i] >> 8);
 	}
-	n += snprintf(b + n, sizeof b - n, "[words]\n");
-	for (int i = 0; i < set_phr_n && n < (int)sizeof b - 8; i++) {
-		for (int k = 0; k < set_phr_len[i] && n < (int)sizeof b - 8; k++) {
-			char g[4];
-			cell_to_gb(set_phrs[i][k], g);
-			n += snprintf(b + n, sizeof b - n, "%s", g);
+	b[n++] = (unsigned char)set_phr_n;
+	for (int i = 0; i < set_phr_n; i++) {
+		int k = set_phr_len[i];
+		if (k < 0)
+			k = 0;
+		if (k > SET_PHR_LEN)
+			k = SET_PHR_LEN;
+		b[n++] = (unsigned char)k;
+		for (int j = 0; j < k; j++) {
+			b[n++] = (unsigned char)(set_phrs[i][j] & 0xFF);
+			b[n++] = (unsigned char)(set_phrs[i][j] >> 8);
 		}
-		n += snprintf(b + n, sizeof b - n, "\n");
 	}
-	return txt_save(IME_FILE, b, n, IME_ALLOC);
+	/* rewrite whichever *.IME_* already exists so a name chosen on a PC
+	   survives; create FXTXT.IME_1 only when there is none */
+	if (ime_find(name, sizeof name) < 0)
+		snprintf(name, sizeof name, "%s", IME_FILE);
+	return txt_save(name, (char const *)b, n, IME_ALLOC);
 }
 
-static void ime_load(void)
+static void ime_load_text(char *b)
 {
-	char b[512];
-	if (txt_load(IME_FILE, b, sizeof b) <= 0)
-		return;
 	int sect = 0;		/* 0 none, 1 chars, 2 words */
 	char *p = b;
 	while (*p) {
@@ -4170,6 +4206,52 @@ static void ime_load(void)
 			break;
 		p = e + 1;
 	}
+}
+
+static void ime_load_bin(unsigned char const *b, int n)
+{
+	int p = 4;
+
+	if (p >= n)
+		return;
+	int nc = b[p++];
+	for (int i = 0; i < nc && p + 1 < n; i++, p += 2)
+		if (set_char_n < SET_CHAR_MAX)
+			set_chars[set_char_n++] = (uint16_t)(b[p] | (b[p + 1] << 8));
+	if (p >= n)
+		return;
+	int nw = b[p++];
+	for (int i = 0; i < nw && p < n; i++) {
+		int k = b[p++];
+		if (k <= 0 || k > SET_PHR_LEN || p + 2 * k > n)
+			break;
+		if (set_phr_n < SET_PHR_MAX) {
+			for (int j = 0; j < k; j++)
+				set_phrs[set_phr_n][j] =
+					(uint16_t)(b[p + 2 * j] | (b[p + 2 * j + 1] << 8));
+			set_phr_len[set_phr_n] = k;
+			set_phr_n++;
+		}
+		p += 2 * k;
+	}
+}
+
+static void ime_load(void)
+{
+	char name[40];
+	unsigned char b[IME_ALLOC];
+	int n;
+
+	if (ime_find(name, sizeof name) < 0)
+		snprintf(name, sizeof name, "%s", IME_FILE);
+	n = txt_load(name, (char *)b, sizeof b);
+	if (n <= 0)
+		return;
+	if (n >= 8 && !memcmp(b, IME_MAGIC, 4)) {
+		ime_load_bin(b, n);
+		return;
+	}
+	ime_load_text((char *)b);	/* plain text still works */
 }
 
 /* say whether a save landed: the settings pages have no other feedback */
