@@ -192,6 +192,10 @@ static int set_phr_len[SET_PHR_MAX];
 static int set_phr_n;
 static uint16_t phr_buf[SET_PHR_LEN];	/* the phrase being composed */
 static int phr_buf_n;
+/* which *.IME_* file we load from and write to; looked up once at startup so
+   that saving never has to walk the directory again (the search API is
+   documented as unreliable, and it is not worth risking on every key) */
+static char ime_name[40];
 
 static uint16_t kb_cells[24];		/* typed cells (search prompt) */
 static int kb_len;
@@ -3716,7 +3720,16 @@ static void kb_put(uint16_t cell)
 		return;
 	}
 	if (kb_target == 2) {
-		if (cell && set_char_n < SET_CHAR_MAX) {
+		if (!cell)
+			return;
+		for (int i = 0; i < set_char_n; i++) {
+			if (set_chars[i] == cell) {
+				set_sel = i;
+				snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xD4\xDA\xC1\xD0\xB1\xED\xD6\xD0");
+				return;		/* already in the list, nothing to save */
+			}
+		}
+		if (set_char_n < SET_CHAR_MAX) {
 			set_chars[set_char_n++] = cell;
 			set_sel = set_char_n - 1;
 			set_saved(ime_save());
@@ -3999,7 +4012,7 @@ static int gb_cells(char const *s, uint16_t *out, int cap)
 #define IME_FILE "FXTXT.IME_1"	/* created when no *.IME_* exists yet */
 #define IME_PAT  "*.IME_*"	/* any suffix after the underscore */
 #define IME_MAGIC "FIM1"
-#define CFG_ALLOC 32		/* a few dozen bytes is all the settings need */ 		/* bytes reserved at creation */
+#define CFG_ALLOC 32		/* a few dozen bytes is all the settings need */
 #define IME_ALLOC 512		/* binary word list: 4+1+48 + 8*(1+24) = 253 max */
 
 static int txt_fc(uint16_t *fc, int cap, char const *name)
@@ -4090,26 +4103,57 @@ static int txt_save(char const *name, char const *data, int len, int alloc)
 	return w == 0 ? 0 : -1;
 }
 
+static int ime_is_ime_name(char const *s)
+{
+	/* does the name contain ".IME_" in any case? */
+	for (int i = 0; s[i]; i++) {
+		static char const w[] = ".IME_";
+		int k = 0;
+		while (w[k] && s[i + k]) {
+			char c = s[i + k];
+			if (c >= 'a' && c <= 'z')
+				c = (char)(c - 32);
+			if (c != w[k])
+				break;
+			k++;
+		}
+		if (!w[k])
+			return 1;
+	}
+	return 0;
+}
+
 static int ime_find(char *name, int cap)
 {
-	uint16_t pat[40], found[96];
+	/* one wildcard only: "*.IME_*" has two, and bfile.h says multi-star
+	   patterns are unsupported in the worst case */
+	uint16_t pat[32], found[256];
 	struct BFile_FileInfo fi;
-	int h = 0, n = 0, last = -1, m = 0;
-	char const *s = "\\\\fls0\\" IME_PAT;
+	int h = 0, m = -1, n = 0;
+	char const *s = "\\\\fls0\\*";
 
-	for (int i = 0; s[i] && n < 39; i++)
-		pat[n++] = (unsigned char)s[i];
+	for (; *s && n < 31; s++)
+		pat[n++] = (unsigned char)*s;
 	pat[n] = 0;
 	if (BFile_FindFirst(pat, &h, found, &fi) < 0)
 		return -1;
+	for (;;) {
+		int last = -1;
+		char base[48];
+		for (int i = 0; found[i]; i++)
+			if (found[i] == '\\')
+				last = i;
+		fc_to_bytes(found + last + 1, base, (int)sizeof base);
+		if (base[0] && fi.type != BFile_Type_Directory && ime_is_ime_name(base)) {
+			snprintf(name, cap, "%s", base);
+			m = 0;
+			break;
+		}
+		if (BFile_FindNext(h, found, &fi) < 0)
+			break;
+	}
 	BFile_FindClose(h);
-	for (int i = 0; found[i]; i++)
-		if (found[i] == '\\')
-			last = i;
-	for (int i = last + 1; found[i] && m < cap - 1; i++)
-		name[m++] = (char)found[i];
-	name[m] = 0;
-	return m > 0 ? 0 : -1;
+	return m;
 }
 
 static int cfg_save(void)
@@ -4161,7 +4205,6 @@ static int ime_save(void)
 	/* FIM1 | nchars | u16[nchars] | nwords | (u8 n | u16[n]) * nwords
 	   little endian display cells: keeps the 24+8 entry lists in ~250 B */
 	unsigned char b[IME_ALLOC];
-	char name[40];
 	int n = 0;
 
 	memcpy(b, IME_MAGIC, 4);
@@ -4184,11 +4227,11 @@ static int ime_save(void)
 			b[n++] = (unsigned char)(set_phrs[i][j] >> 8);
 		}
 	}
-	/* rewrite whichever *.IME_* already exists so a name chosen on a PC
-	   survives; create FXTXT.IME_1 only when there is none */
-	if (ime_find(name, sizeof name) < 0)
-		snprintf(name, sizeof name, "%s", IME_FILE);
-	return txt_save(name, (char const *)b, n, IME_ALLOC);
+	/* rewrite the file the name was picked for, so a name chosen on a PC
+	   survives; create FXTXT.IME_1 only when there was none */
+	if (!ime_name[0])
+		snprintf(ime_name, sizeof ime_name, "%s", IME_FILE);
+	return txt_save(ime_name, (char const *)b, n, IME_ALLOC);
 }
 
 static void ime_load_text(char *b)
@@ -4257,13 +4300,12 @@ static void ime_load_bin(unsigned char const *b, int n)
 
 static void ime_load(void)
 {
-	char name[40];
 	unsigned char b[IME_ALLOC];
 	int n;
 
-	if (ime_find(name, sizeof name) < 0)
-		snprintf(name, sizeof name, "%s", IME_FILE);
-	n = txt_load(name, (char *)b, sizeof b);
+	if (!ime_name[0] && ime_find(ime_name, sizeof ime_name) < 0)
+		snprintf(ime_name, sizeof ime_name, "%s", IME_FILE);
+	n = txt_load(ime_name, (char *)b, sizeof b);
 	if (n <= 0)
 		return;
 	if (n >= 8 && !memcmp(b, IME_MAGIC, 4)) {
@@ -4292,6 +4334,15 @@ static void set_defaults(void)
 /* finish the phrase being composed: append it to the list */
 static void set_phrase_commit(void)
 {
+	for (int i = 0; i < set_phr_n && phr_buf_n > 0; i++) {
+		if (set_phr_len[i] == phr_buf_n
+		    && !memcmp(set_phrs[i], phr_buf, phr_buf_n * sizeof(uint16_t))) {
+			set_sel = i;
+			snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xD4\xDA\xC1\xD0\xB1\xED\xD6\xD0");
+			phr_buf_n = 0;
+			return;
+		}
+	}
 	if (phr_buf_n > 0 && set_phr_n < SET_PHR_MAX) {
 		for (int i = 0; i < phr_buf_n; i++)
 			set_phrs[set_phr_n][i] = phr_buf[i];
@@ -4329,10 +4380,8 @@ static void settings_back(void)
 
 static void set_bar(char const *a, char const *b, char const *c, char const *f)
 {
-	/* a failed insert used to be invisible: nothing on the page shows
-	   status_msg, so say it here */
-	if (status_msg[0])
-		draw_ui(2, CONTENT_Y + 36, status_msg, 0);
+	/* the message goes in the title bar (see the ui_hints calls below) so it
+	   never covers the list, and handle_set_key() clears it on the next key */
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = 0;
 	box_lab[0] = a;
@@ -4355,7 +4404,7 @@ static void draw_set(void)
 	snprintf(line, sizeof line, "\xBC\xC6\xCA\xFD  %s", set_unit_lines ? "\xD0\xD0" : "\xD2\xB3");
 	draw_ui(2, CONTENT_Y + 22, line, 0);
 	draw_ui(2, CONTENT_Y + 33, "\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8", 0);
-	ui_hints("", "", 0);
+	ui_hints("", status_msg, 0);
 	dupdate();
 }
 
@@ -4369,7 +4418,7 @@ static void draw_set_inv(void)
 	draw_ui(2, CONTENT_Y + 1, "\xCF\xD4\xCA\xBE\xB7\xB4\xC9\xAB", 0);
 	draw_ui(2, CONTENT_Y + 13, set_inv ? "\xB5\xB1\xC7\xB0\x20\xBF\xAA" : "\xB5\xB1\xC7\xB0\x20\xB9\xD8", 0);
 	draw_ui(2, CONTENT_Y + 22, "\x46\x31\x20\xB9\xD8\x20\x20\x20\x46\x32\x20\xBF\xAA", 0);
-	ui_hints("", "", 0);
+	ui_hints("", status_msg, 0);
 	dupdate();
 }
 
@@ -4383,7 +4432,7 @@ static void draw_set_unit(void)
 	draw_ui(2, CONTENT_Y + 1, "\xD4\xC4\xB6\xC1\xD2\xB3\xBC\xC6\xCA\xFD", 0);
 	draw_ui(2, CONTENT_Y + 13, set_unit_lines ? "\xB5\xB1\xC7\xB0\x20\xD0\xD0" : "\xB5\xB1\xC7\xB0\x20\xD2\xB3", 0);
 	draw_ui(2, CONTENT_Y + 22, "\x46\x31\x20\xD2\xB3\x20\x20\x20\x46\x32\x20\xD0\xD0", 0);
-	ui_hints("", "", 0);
+	ui_hints("", status_msg, 0);
 	dupdate();
 }
 
@@ -4400,7 +4449,7 @@ static void draw_set_ime(void)
 	snprintf(line, sizeof line, "\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF  %d", set_phr_n);
 	draw_ui(2, CONTENT_Y + 12, line, 0);
 	draw_ui(2, CONTENT_Y + 30, "\x46\x31\x20\xB3\xA3\xD3\xC3\xD7\xD6\x20\x20\x46\x32\x20\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF", 0);
-	ui_hints("", "", 0);
+	ui_hints("", status_msg, 0);
 	dupdate();
 }
 
@@ -4411,8 +4460,7 @@ static void draw_set_chars(void)
 	ui_info_right = 0;
 	set_bar("\xCC\xED\xBC\xD3", "\xC9\xBE\xB3\xFD", 0, "\xB0\xEF\xD6\xFA");
 	ui_title("\xB3\xA3\xD3\xC3\xD7\xD6");
-	if (!status_msg[0])
-		draw_ui(2, CONTENT_Y + 33, "F1 \xCC\xED\xBC\xD3  EXE \xB2\xE5\xC8\xEB", 0);
+	draw_ui(2, CONTENT_Y + 33, "F1 \xCC\xED\xBC\xD3  EXE \xB2\xE5\xC8\xEB", 0);
 	for (int i = 0; i < set_char_n && i < 24; i++) {
 		int cx = 3 + (i % 8) * 15;
 		int cy = CONTENT_Y + 2 + (i / 8) * 13;
@@ -4425,7 +4473,7 @@ static void draw_set_chars(void)
 	}
 	if (set_char_n == 0)
 		draw_ui(2, CONTENT_Y + 2, "\x28\xBF\xD5\x29  F1 \xCC\xED\xBC\xD3", 0);
-	ui_hints("", "", 0);
+	ui_hints("", status_msg, 0);
 	dupdate();
 }
 
@@ -4460,7 +4508,7 @@ static void draw_set_phr(void)
 		for (int k = 0; k < 7; k++)
 			ink(x + 1, y + k);
 	}
-	ui_hints("", "", 0);
+	ui_hints("", status_msg, 0);
 	dupdate();
 }
 
@@ -4499,6 +4547,8 @@ static void set_insert(uint16_t const *src, int n)
 
 static void handle_set_key(key_event_t ev)
 {
+	/* a save report lives for exactly one key press (buglist2 item 22) */
+	status_msg[0] = 0;
 	if (ev.key == KEY_EXIT) {
 		if (mode == MODE_SET)
 			settings_back();
