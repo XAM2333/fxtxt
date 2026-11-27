@@ -4748,7 +4748,7 @@ static void draw_set_ime(void)
 	ui_no_cups = 0;
 	ui_info_right = 0;
 	set_bar("\xB3\xA3\xD3\xC3", "\xB6\xCC\xD3\xEF", 0, "\xB0\xEF\xD6\xFA");
-	ui_title("\xCA\xE4\xC8\xEB\xB7\xA8");
+	ui_title_state("\xCA\xE4\xC8\xEB\xB7\xA8", 1);
 	snprintf(line, sizeof line, "\xB3\xA3\xD3\xC3\xD7\xD6  %d", set_char_n);
 	draw_ui(2, CONTENT_Y + 1, line, 0);
 	snprintf(line, sizeof line, "\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF  %d", set_phr_n);
@@ -4764,7 +4764,7 @@ static void draw_set_chars(void)
 	ui_no_cups = 0;
 	ui_info_right = 0;
 	set_bar("\xCC\xED\xBC\xD3", "\xC9\xBE\xB3\xFD", "\xC7\xB0\xD2\xC6", "\xB0\xEF\xD6\xFA");
-	ui_title("\xB3\xA3\xD3\xC3\xD7\xD6");
+	ui_title_state("\xB3\xA3\xD3\xC3\xD7\xD6", 1);
 	draw_ui(2, CONTENT_Y + 33, "F1 \xCC\xED\xBC\xD3  EXE \xB2\xE5\xC8\xEB", 0);
 	for (int i = 0; i < set_char_n && i < 24; i++) {
 		int cx = 3 + (i % 8) * 15;
@@ -4788,7 +4788,7 @@ static void draw_set_phr(void)
 	ui_no_cups = 0;
 	ui_info_right = 0;
 	set_bar("\xCC\xED\xBC\xD3", "\xC9\xBE\xB3\xFD", 0, "\xB0\xEF\xD6\xFA");
-	ui_title("\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF");
+	ui_title_state("\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF", 1);
 	if (set_phr_n == 0 && phr_buf_n == 0)
 		draw_ui(2, CONTENT_Y + 1, "\x28\xBF\xD5\x29  F1 \xCC\xED\xBC\xD3", 0);
 	for (int i = 0; i < set_phr_n; i++) {
