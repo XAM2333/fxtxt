@@ -3132,6 +3132,11 @@ static void draw_view(void)
 		ccell = line_start(cur_line) + cur_col;
 		if (ccell > ncell) ccell = ncell;
 		crow = row_of_cell(ccell);
+		/* Row_of_cell() answers with the row *holding* the last newline, so a
+		   caret sitting past the end of the document looked as if it had not
+		   moved and the new empty line never appeared (buglist2 25). */
+		if (tail_row() && ccell >= ncell)
+			crow = row_count();
 		if (crow < view_top || crow >= view_top + rows())
 			view_top = (crow / rows()) * rows();	/* whole pages only */
 	}
@@ -4738,7 +4743,7 @@ static void draw_set_ime(void)
 	ui_clip_x = 128;
 	ui_no_cups = 0;
 	ui_info_right = 0;
-	set_bar("\xB3\xA3\xD3\xC3\xD7\xD6", "\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF", 0, "\xB0\xEF\xD6\xFA");
+	set_bar("\xB3\xA3\xD3\xC3", "\xB6\xCC\xD3\xEF", 0, "\xB0\xEF\xD6\xFA");
 	ui_title("\xCA\xE4\xC8\xEB\xB7\xA8");
 	snprintf(line, sizeof line, "\xB3\xA3\xD3\xC3\xD7\xD6  %d", set_char_n);
 	draw_ui(2, CONTENT_Y + 1, line, 0);
@@ -4846,7 +4851,10 @@ static void handle_set_key(key_event_t ev)
 	/* a save report lives for exactly one key press (buglist2 item 22) */
 	status_msg[0] = 0;
 	if (ev.key == KEY_EXIT) {
-		if (mode == MODE_SET)
+		/* buglist2 21: one level per page, never a shortcut to the top */
+		if (mode == MODE_SET_CHARS || mode == MODE_SET_PHR)
+			mode = MODE_SET_IME;
+		else if (mode == MODE_SET)
 			settings_back();
 		else
 			mode = MODE_SET;
@@ -5605,7 +5613,8 @@ static void handle_view_key(key_event_t ev)
 		return;
 	case KEY_EXE:
 		if (edit_mode) {
-			text_newline();		/* 换行 = EXE */
+			text_newline();
+		totals_gen = -1;	/* buglist2 25: the new row must show */		/* 换行 = EXE */
 		} else {
 			help_page = 1;
 			help_back = MODE_VIEW;
