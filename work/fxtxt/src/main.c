@@ -225,6 +225,8 @@ static int offset_to_line(int off);
 static char ev_letter(key_event_t ev);
 static char alpha_letter(int key);
 static char key_ascii(int key);
+static void open_keyboard(int target, int page);
+static void cell_to_gb(uint16_t cell, char *out);
 static void ui_status(char const *text);
 static void open_settings(void);
 static int py_candidates(void);
@@ -2181,6 +2183,11 @@ static void handle_name_key(key_event_t ev)
 		}
 		return;
 	}
+	if (ev.key == KEY_F6) {
+		/* the editor's own input method, writing into the name field */
+		open_keyboard(4, PAGE_PINYIN);
+		return;
+	}
 	if (ev.key == KEY_F1) {
 		case_upper = !case_upper;
 		snprintf(status_msg, sizeof status_msg,
@@ -3992,6 +3999,8 @@ static void kb_back(void)
 		mode = MODE_SET_CHARS;
 	else if (kb_target == 3)
 		mode = MODE_SET_PHR;
+	else if (kb_target == 4)
+		mode = MODE_NAME;
 	else
 		mode = MODE_VIEW;
 }
@@ -4036,6 +4045,24 @@ static void kb_put(uint16_t cell)
 	if (kb_target == 3) {
 		if (cell && phr_buf_n < SET_PHR_LEN)
 			phr_buf[phr_buf_n++] = cell;
+		return;
+	}
+	if (kb_target == 4) {
+		char b[4];
+		cell_to_gb(cell, b);
+		for (int k = 0; b[k]; k++) {
+			char c = b[k];
+			if (!name_char_ok(c))
+				continue;
+			if (name_len >= (int)sizeof name_buf - 1)
+				break;
+			for (int i = name_len; i > name_pos; i--)
+				name_buf[i] = name_buf[i - 1];
+			name_buf[name_pos] = c;
+			name_len++;
+			name_pos++;
+			name_buf[name_len] = 0;
+		}
 		return;
 	}
 	text_insert(cell);
