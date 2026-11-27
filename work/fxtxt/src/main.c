@@ -1902,63 +1902,109 @@ static int name_copy_file(char const *oldn, char const *newn)
 	enum { CHUNK = 4096 };
 	uint16_t fo[64], fn[64];
 	unsigned char *buf;
-	int fd, n, rc = 0;
+	char po[256], pn[256];
+	int rd, wr, total = 0, n;
+	int ok = 0;
 
-	/* otherwise copy through a small buffer: a 64 KB block does not fit in
-	   this heap, and malloc failing here made every rename report -1 */
-	buf = malloc(CHUNK + 2);	/* room for the even-length pad byte */
-	if (!buf)
-		return -4;
+	/* the reader opens documents through open_any(), so read the same way:
+	   BFile_Open is not reliable for an entry that the listing produced */
 	if (name_src_fc)
 		memcpy(fo, name_src_fc, sizeof fo);
 	else
 		txt_fc(fo, 64, oldn);
 	txt_fc(fn, 64, newn);
-	fd = BFile_Open(fo, BFile_ReadOnly);
-	if (fd < 0) {
-		free(buf);
-		return -1;
-	}
-	{
-		int total = BFile_Size(fd);
-		int sz = (total + 1) & ~1;
-		BFile_Close(fd);
-		if (sz < 2)
-			sz = 2;
-		BFile_Remove(fn);
-		if (BFile_Create(fn, BFile_File, &sz) != 0) {
+	snprintf(po, sizeof po, "%s\\%s", cur_dir, oldn);
+	snprintf(pn, sizeof pn, "%s\\%s", cur_dir, newn);
+
+	buf = malloc(CHUNK + 2);	/* room for the even-length pad byte */
+	if (!buf)
+		return -4;
+
+	rd = BFile_Open(fo, BFile_ReadOnly);
+	if (rd < 0) {
+		FILE *in = open_any(po, "rb");
+		if (!in) {
 			free(buf);
-			return -2;
+			return -1;	/* nothing could open the source */
 		}
+		total = 0;
 		{
-			int in = BFile_Open(fo, BFile_ReadOnly);
-			int out = in >= 0 ? BFile_Open(fn, BFile_WriteOnly) : -1;
-			if (in < 0 || out < 0) {
-				if (in >= 0)
-					BFile_Close(in);
+			size_t got;
+			while ((got = fread(buf, 1, CHUNK, in)) > 0) {
+				n = (int)got;
+				if (n & 1)
+					buf[n] = 0;
+				if (wr < 0) {
+					/* the writer is opened lazily, once the size is known */
+				}
+				total += n;
+			}
+		}
+		fclose(in);
+		/* reopen to stream it out; the size is only known now */
+		{
+			FILE *in2 = open_any(po, "rb");
+			FILE *out = open_any(pn, "wb");
+			if (!in2 || !out) {
+				if (in2)
+					fclose(in2);
+				if (out)
+					fclose(out);
 				free(buf);
 				return -2;
 			}
-			n = 0;
-			while (n < total) {
-				int want = total - n < CHUNK ? total - n : CHUNK;
-				int got = BFile_Read(in, buf, want, -1);
-				if (got <= 0) {
-					rc = -3;
-					break;
-				}
-				if (want & 1)
-					buf[got] = 0;	/* keep every write even */
-				BFile_Write(out, buf, (got + 1) & ~1);
-				n += got;
+			while ((n = (int)fread(buf, 1, CHUNK, in2)) > 0) {
+				if (n & 1)
+					buf[n] = 0;
+				fwrite(buf, 1, (size_t)((n + 1) & ~1), out);
 			}
-			BFile_Close(in);
-			BFile_Close(out);
+			fclose(in2);
+			fclose(out);
+			ok = 1;
+		}
+	} else {
+		total = BFile_Size(rd);
+		BFile_Close(rd);
+		{
+			int sz = (total + 1) & ~1;
+			if (sz < 2)
+				sz = 2;
+			BFile_Remove(fn);
+			if (BFile_Create(fn, BFile_File, &sz) != 0) {
+				free(buf);
+				return -2;
+			}
+			{
+				int in = BFile_Open(fo, BFile_ReadOnly);
+				int out = in >= 0 ? BFile_Open(fn, BFile_WriteOnly) : -1;
+				if (in < 0 || out < 0) {
+					if (in >= 0)
+						BFile_Close(in);
+					free(buf);
+					return -2;
+				}
+				n = 0;
+				while (n < total) {
+					int want = total - n < CHUNK ? total - n : CHUNK;
+					int got = BFile_Read(in, buf, want, -1);
+					if (got <= 0) {
+						ok = -3;
+						break;
+					}
+					if (got & 1)
+						buf[got] = 0;
+					BFile_Write(out, buf, (got + 1) & ~1);
+					n += got;
+				}
+				BFile_Close(in);
+				BFile_Close(out);
+				ok = ok < 0 ? ok : 1;
+			}
 		}
 	}
 	free(buf);
-	if (rc != 0)
-		return rc;
+	if (ok <= 0)
+		return ok ? ok : -3;
 	fs_delete_path(oldn);
 	return 0;
 }
