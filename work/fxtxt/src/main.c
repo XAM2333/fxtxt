@@ -1927,38 +1927,19 @@ static int name_copy_file(char const *oldn, char const *newn)
 			free(buf);
 			return -1;	/* nothing could open the source */
 		}
-		total = 0;
 		{
-			size_t got;
-			while ((got = fread(buf, 1, CHUNK, in)) > 0) {
-				n = (int)got;
-				if (n & 1)
-					buf[n] = 0;
-				if (wr < 0) {
-					/* the writer is opened lazily, once the size is known */
-				}
-				total += n;
-			}
-		}
-		fclose(in);
-		/* reopen to stream it out; the size is only known now */
-		{
-			FILE *in2 = open_any(po, "rb");
 			FILE *out = open_any(pn, "wb");
-			if (!in2 || !out) {
-				if (in2)
-					fclose(in2);
-				if (out)
-					fclose(out);
+			if (!out) {
+				fclose(in);
 				free(buf);
 				return -2;
 			}
-			while ((n = (int)fread(buf, 1, CHUNK, in2)) > 0) {
+			while ((n = (int)fread(buf, 1, CHUNK, in)) > 0) {
 				if (n & 1)
 					buf[n] = 0;
 				fwrite(buf, 1, (size_t)((n + 1) & ~1), out);
 			}
-			fclose(in2);
+			fclose(in);
 			fclose(out);
 			ok = 1;
 		}
