@@ -229,6 +229,8 @@ static char alpha_letter(int key);
 static char key_ascii(int key);
 static void open_keyboard(int target, int page);
 static void cell_to_gb(uint16_t cell, char *out);
+static void ime_flush(void);
+static int ime_dirty;
 static void ui_status(char const *text);
 static void open_settings(void);
 static int py_candidates(void);
@@ -3996,6 +3998,7 @@ static void text_backspace(void)
 /* Where the keyboard goes back to when it is done. */
 static void kb_back(void)
 {
+	ime_flush();
 	py_reset();
 	if (kb_target == 2 || kb_target == 3)
 		mode = MODE_SET_IME;
@@ -4015,6 +4018,8 @@ static int ime_save(void);
    anything that matches *.IME_*; find whichever one is there */
 static int ime_find(char *name, int cap);
 static void set_saved(int rc);
+static void ime_flush(void);
+static int ime_dirty;
 static void open_keyboard(int target, int page);
 
 static void kb_put(uint16_t cell)
@@ -4038,7 +4043,7 @@ static void kb_put(uint16_t cell)
 			set_chars[set_char_n++] = cell;
 			set_sel = set_char_n - 1;
 			py_cache_lists();
-			set_saved(ime_save());
+			ime_dirty = 1;
 		}
 		return;
 	}
@@ -4132,7 +4137,7 @@ static void draw_keyboard(void)
 		box_lab[5] = "\xCD\xEA\xB3\xC9";
 	}
 	if (kb_target == 2 || kb_target == 3) {
-		ui_title(kb_target == 2 ? "\xCC\xED\xBC\xD3\xB3\xA3\xD3\xC3\xD7\xD6" : "\xCC\xED\xBC\xD3\xB3\xA3\xD3\xC3\xB4\xCA");
+		ui_title(kb_target == 2 ? "\xCC\xED\xBC\xD3\xD7\xD6\xB4\xCA" : "\xCC\xED\xBC\xD3\xD7\xD6\xB4\xCA");
 	} else {
 		ui_title(punct ? "\xB1\xEA\xB5\xE3\xB7\xFB\xBA\xC5"
 		               : pinyin ? (kb_target == 1 ? "\xC6\xB4\xD2\xF4\xCB\xD1\xCB\xF7" : "\xC6\xB4\xD2\xF4\xCA\xE4\xC8\xEB")
@@ -4681,7 +4686,7 @@ static void set_phrase_commit(void)
 		set_phr_n++;
 		set_sel = set_phr_n - 1;
 		py_cache_lists();
-		set_saved(ime_save());
+		ime_dirty = 1;
 	}
 	phr_buf_n = 0;
 }
@@ -4697,8 +4702,17 @@ static void open_settings(void)
 	mode = MODE_SET;
 }
 
+static void ime_flush(void)
+{
+	if (!ime_dirty)
+		return;
+	ime_dirty = 0;
+	set_saved(ime_save());
+}
+
 static void settings_back(void)
 {
+	ime_flush();
 	if (set_from == MODE_VIEW && set_doc) {
 		mode = MODE_VIEW;
 		edit_mode = set_edit_was;
@@ -4824,58 +4838,44 @@ static void draw_set_ime(void)
 {
 	int total = set_char_n + set_phr_n;
 	ui_clip_x = 128;
-	ui_no_cups = 1;
+	ui_no_cups = 0;
 	ui_info_right = 0;
+	for (int i = 0; i < 6; i++)
+		box_lab[i] = NULL;
+	box_lab[0] = "\xD4\xF6";	/* 增 */
+	box_lab[1] = "\xB4\xCA";	/* 词 */
+	box_lab[2] = "\xC9\xBE";	/* 删 */
+	box_lab[3] = "\xD2\xC6";	/* 移 */
+	box_lab[5] = "\xD6\xFA";	/* 助 */
 	ui_title_state("\xD7\xD6\xB4\xCA", 1);
 	if (total == 0) {
-		draw_ui(2, CONTENT_Y + 1, "\x28\xBF\xD5\x29\x20\x46\x31\x20\xBC\xD3\xD7\xD6\x20\x20\x46\x32\x20\xBC\xD3\xB4\xCA", 0);
-		draw_ui(2, CONTENT_Y + 20, "\x45\x58\x45\x20\xB2\xE5\xC8\xEB\x20\x20\x46\x33\x20\xC9\xBE\xB3\xFD\x20\x20\x46\x34\x20\xC7\xB0\xD2\xC6", 0);
+		draw_ui(2, CONTENT_Y + 2, "\x28\xBF\xD5\x29\x20\x20\x46\x31\x20\xBC\xD3\xD7\xD6\x20\x20\x20\x46\x32\x20\xBC\xD3\xB4\xCA", 0);
 	} else {
 		int top = set_sel - set_sel % 3;
-		int y = CONTENT_Y + 1;
-		for (int k = top; k < total && k < top + 3; k++, y += 10) {
-			int sel = (k == set_sel);
-			if (sel)
-				drect(0, y - 1, TEXT_W - 1, y + 7, INKBAR);
-			int x = 2;
+		int y = CONTENT_Y + 2;
+		for (int k = top; k < total && k < top + 3; k++, y += 12) {
+			if (k == set_sel)
+				draw_next_icon(2, y + 1);
+			int x = 12;
 			if (k < set_char_n) {
-				draw_cell(x, y, set_chars[k], sel);
+				draw_cell(x, y, set_chars[k], 0);
 			} else {
-				int p = k - set_char_n;
-				for (int j = 0; j < set_phr_len[p]; j++) {
-					draw_cell(x, y, set_phrs[p][j], sel);
-					x += cell_adv(set_phrs[p][j]);
+				int w = k - set_char_n;
+				for (int c = 0; c < set_phr_len[w]; c++) {
+					draw_cell(x, y, set_phrs[w][c], 0);
+					x += cell_adv(set_phrs[w][c]);
 				}
 			}
 		}
 	}
-	draw_ui(2, STATUS_Y, "\x46\x31\x2F\x46\x32\x20\xCC\xED\xBC\xD3\x20\x20\x46\x33\x20\xC9\xBE\xB3\xFD", 0);
 	ui_hints("", status_msg, 0);
 	dupdate();
 }
 
+/* the old per-list pages now share the merged one */
 static void draw_set_chars(void)
 {
-	ui_clip_x = 128;
-	ui_no_cups = 0;
-	ui_info_right = 0;
-	set_bar("\xCC\xED\xBC\xD3", "\xC9\xBE\xB3\xFD", "\xC7\xB0\xD2\xC6", "\xB0\xEF\xD6\xFA");
-	ui_title_state("\xB3\xA3\xD3\xC3\xD7\xD6", 1);
-	draw_ui(2, CONTENT_Y + 33, "F1 \xCC\xED\xBC\xD3  EXE \xB2\xE5\xC8\xEB", 0);
-	for (int i = 0; i < set_char_n && i < 24; i++) {
-		int cx = 3 + (i % 8) * 15;
-		int cy = CONTENT_Y + 2 + (i / 8) * 13;
-		if (i == set_sel) {
-			drect(cx - 1, cy - 1, cx + 9, cy + 8, INKBAR);
-			draw_cell(cx + 1, cy, set_chars[i], 1);
-		} else {
-			draw_cell(cx + 1, cy, set_chars[i], 0);
-		}
-	}
-	if (set_char_n == 0)
-		draw_ui(2, CONTENT_Y + 2, "\x28\xBF\xD5\x29  F1 \xCC\xED\xBC\xD3", 0);
-	ui_hints("", status_msg, 0);
-	dupdate();
+	draw_set_ime();
 }
 
 static void draw_set_phr(void)
@@ -5065,7 +5065,7 @@ static void handle_set_key(key_event_t ev)
 			if (set_sel >= set_char_n + set_phr_n && set_sel > 0)
 				set_sel--;
 			py_cache_lists();
-			set_saved(ime_save());
+			ime_dirty = 1;
 		} else if (ev.key == KEY_F4 && total > 0) {
 			if (set_sel < set_char_n && set_sel > 0) {
 				uint16_t c = set_chars[set_sel];
@@ -5087,7 +5087,7 @@ static void handle_set_key(key_event_t ev)
 				set_sel = set_char_n;
 			}
 			py_cache_lists();
-			set_saved(ime_save());
+			ime_dirty = 1;
 		}
 		return;
 	}
@@ -5119,7 +5119,7 @@ static void handle_set_key(key_event_t ev)
 				if (set_sel >= set_char_n && set_sel > 0)
 					set_sel--;
 				py_cache_lists();
-				set_saved(ime_save());
+				ime_dirty = 1;
 			}
 		} else if (ev.key == KEY_F3) {
 			/* 前移: the list order is the candidate order, so this is
@@ -5131,7 +5131,7 @@ static void handle_set_key(key_event_t ev)
 				set_chars[0] = c;
 				set_sel = 0;
 				py_cache_lists();
-				set_saved(ime_save());
+				ime_dirty = 1;
 			}
 		}
 		return;
@@ -5161,7 +5161,7 @@ static void handle_set_key(key_event_t ev)
 				if (set_sel >= set_phr_n && set_sel > 0)
 					set_sel--;
 				py_cache_lists();
-				set_saved(ime_save());
+				ime_dirty = 1;
 			}
 		}
 		return;
