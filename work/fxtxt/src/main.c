@@ -1894,43 +1894,67 @@ static int name_rename;		/* prompt is renaming the selected file */
 /* Copy one file to a new name inside the current folder and remove the old
    one.  Paths use backslashes throughout: the BFile layer wants them and a
    mixed "\\fls0/NAME.TXT" is not something to rely on. */
+static int txt_fc(uint16_t *fc, int cap, char const *name);
+
 static int name_copy_file(char const *oldn, char const *newn)
 {
-	char po[256], pn[256];
 	enum { CAP = 65536 };
-	snprintf(po, sizeof po, "%s\\%s", cur_dir, oldn);
-	snprintf(pn, sizeof pn, "%s\\%s", cur_dir, newn);
-
-	FILE *in = open_any(po, "rb");
-	if (!in)
-		return -1;
 	unsigned char *buf = malloc(CAP);
-	if (!buf) {
-		fclose(in);
+	uint16_t fc[64];
+	char po[256], pn[256];
+	int fd, n;
+
+	if (!buf)
 		return -1;
+	/* read: BFile first, the stdio view as a fallback */
+	txt_fc(fc, 64, oldn);
+	fd = BFile_Open(fc, BFile_ReadOnly);
+	if (fd >= 0) {
+		n = BFile_Read(fd, buf, CAP - 2, -1);
+		BFile_Close(fd);
+	} else {
+		snprintf(po, sizeof po, "%s\\%s", cur_dir, oldn);
+		FILE *in = open_any(po, "rb");
+		n = -1;
+		if (in) {
+			size_t got = fread(buf, 1, CAP - 2, in);
+			fclose(in);
+			n = (int)got;
+		}
 	}
-	size_t n = fread(buf, 1, CAP, in);
-	fclose(in);
-	if (n >= CAP) {
+	if (n < 0) {
 		free(buf);
-		return -2;
-	}
-	FILE *out = open_any(pn, "wb");
-	if (!out) {
-		free(buf);
 		return -1;
 	}
-	size_t w = fwrite(buf, 1, n, out);
-	fclose(out);
-	free(buf);
-	if (w != n)
-		return -1;
+	if (n & 1)
+		buf[n] = 0;		/* pad to an even length */
 	{
-		FILE *chk = open_any(pn, "rb");
-		if (!chk)
-			return -1;
-		fclose(chk);
+		int sz = (n + 1) & ~1;
+		if (sz < 2)
+			sz = 2;
+		txt_fc(fc, 64, newn);
+		BFile_Remove(fc);
+		if (BFile_Create(fc, BFile_File, &sz) == 0
+		    && (fd = BFile_Open(fc, BFile_WriteOnly)) >= 0) {
+			BFile_Write(fd, buf, sz);
+			BFile_Close(fd);
+		} else {
+			/* the stdio side of the volume */
+			snprintf(pn, sizeof pn, "%s\\%s", cur_dir, newn);
+			FILE *out = open_any(pn, "wb");
+			if (!out) {
+				free(buf);
+				return -1;
+			}
+			if ((int)fwrite(buf, 1, (size_t)sz, out) != sz) {
+				fclose(out);
+				free(buf);
+				return -1;
+			}
+			fclose(out);
+		}
 	}
+	free(buf);
 	fs_delete_path(oldn);
 	return 0;
 }
@@ -1982,10 +2006,18 @@ static void name_begin_rename(void)
 		status_sticky = 1;
 		return;
 	}
+	status_msg[0] = 0;	/* no stale size or count on the prompt */
 	snprintf(name_buf, sizeof name_buf, "%s", names[list_sel]);
 	size_t n = strlen(name_buf);
-	if (n > 4 && !strcmp(name_buf + n - 4, ".TXT"))
-		name_buf[n - 4] = 0;
+	if (n > 4) {
+		char *ext = name_buf + n - 4;
+		char low[5];
+		for (int i = 0; i < 4; i++)
+			low[i] = (char)(ext[i] >= 'a' && ext[i] <= 'z' ? ext[i] - 32 : ext[i]);
+		low[4] = 0;
+		if (!strcmp(low, ".TXT"))
+			name_buf[n - 4] = 0;
+	}
 	name_len = (int)strlen(name_buf);
 	name_pos = name_len;
 	name_rename = 1;
@@ -4976,6 +5008,7 @@ static void handle_set_key(key_event_t ev)
 		} else if (ev.key == KEY_F1 || ev.key == KEY_F2 || ev.key == KEY_EXE) {
 			int on = (ev.key == KEY_F2);
 			if (set_row == 0 && ev.key != KEY_EXE) {
+				if (set_inv == on) { status_msg[0] = 0; return; }
 				set_inv = on, ui_inv = on;
 				int rc = cfg_save();
 				cfg_load();
@@ -4983,6 +5016,7 @@ static void handle_set_key(key_event_t ev)
 				return;
 			}
 			if (set_row == 1 && ev.key != KEY_EXE) {
+				if (set_unit_lines == on) { status_msg[0] = 0; return; }
 				set_unit_lines = on;
 				int rc = cfg_save();
 				cfg_load();
