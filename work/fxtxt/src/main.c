@@ -76,6 +76,7 @@ static int bfile_write_even(int fd, void const *data, int len)
 enum { MODE_LIST = 0, MODE_VIEW, MODE_KEYB, MODE_HELP, MODE_NAME, MODE_SEARCH, MODE_CONFIRM, MODE_BOOK,
        MODE_GOTO,
        MODE_SET, MODE_SET_INV, MODE_SET_UNIT, MODE_SET_IME, MODE_SET_CHARS, MODE_SET_PHR,
+       MODE_SET_ABOUT,
        };
 enum { PAGE_PINYIN = 0, PAGE_PUNCT, PAGE_LOWER, PAGE_UPPER, PAGE_DIGIT, PAGE_SYMBOL };
 
@@ -85,6 +86,7 @@ static int set_inv;		/* 1 = inverse video */
 static int set_unit_lines;	/* 1 = the reader counter shows lines */
 static int set_from;		/* page the settings were opened from */
 static int set_edit_was;	/* edit mode when they were opened */
+static int set_row;		/* the settings menu cursor */
 static int set_sel;		/* cursor on the palette pages */
 static int set_doc;		/* a document is loaded, so insert works */
 #define PAGE_COUNT 6
@@ -3995,10 +3997,8 @@ static void text_backspace(void)
 static void kb_back(void)
 {
 	py_reset();
-	if (kb_target == 2)
-		mode = MODE_SET_CHARS;
-	else if (kb_target == 3)
-		mode = MODE_SET_PHR;
+	if (kb_target == 2 || kb_target == 3)
+		mode = MODE_SET_IME;
 	else if (kb_target == 4)
 		mode = MODE_NAME;
 	else
@@ -4724,19 +4724,44 @@ static void set_bar(char const *a, char const *b, char const *c, char const *f)
 
 static void draw_set(void)
 {
-	char line[64];
+	static char const *item[5];
+	char line[5][32];
 	ui_clip_x = 128;
-	ui_no_cups = 0;
+	ui_no_cups = 1;		/* a list needs no F bar, the hint says it all */
 	ui_info_right = 0;
-	set_bar("\xB7\xB4\xC9\xAB", "\xD7\xD6\xB4\xCA", "\xBC\xC6\xCA\xFD", "\xB0\xEF\xD6\xFA");
+	item[0] = "\xB7\xB4\xC9\xAB";
+	item[1] = "\xBC\xC6\xCA\xFD\xB5\xA5\xCE\xBB";
+	item[2] = "\xD7\xD6\xB4\xCA";
+	item[3] = "\xB0\xEF\xD6\xFA";
+	item[4] = "\xB9\xD8\xD3\xDA";
+	snprintf(line[0], sizeof line[0], "%s  %s", item[0], set_inv ? "\xBF\xAA" : "\xB9\xD8");
+	snprintf(line[1], sizeof line[1], "%s  %s", item[1], set_unit_lines ? "\xD0\xD0" : "\xD2\xB3");
+	snprintf(line[2], sizeof line[2], "%s  %d/%d", item[2], set_char_n, set_phr_n);
+	snprintf(line[3], sizeof line[3], "%s", item[3]);
+	snprintf(line[4], sizeof line[4], "%s", item[4]);
 	ui_title("\xC9\xE8\xD6\xC3");
-	draw_ui(2, CONTENT_Y + 1, "\x46\x31\x2D\x46\x33\x20\xD1\xA1\xD4\xF1\xCF\xEE\xC4\xBF", 0);
-	snprintf(line, sizeof line, "\xB7\xB4\xC9\xAB  %s", set_inv ? "\xBF\xAA" : "\xB9\xD8");
-	draw_ui(2, CONTENT_Y + 12, line, 0);
-	snprintf(line, sizeof line, "\xBC\xC6\xCA\xFD  %s", set_unit_lines ? "\xD0\xD0" : "\xD2\xB3");
-	draw_ui(2, CONTENT_Y + 22, line, 0);
-	draw_ui(2, CONTENT_Y + 33, "\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8", 0);
+	for (int i = 0; i < 5; i++) {
+		int y = CONTENT_Y + i * 9;
+		if (i == set_row)
+			draw_next_icon(2, y + 1);
+		draw_ui(12, y, line[i], 0);
+	}
+	draw_ui(2, STATUS_Y, "\xC9\xCF\xCF\xC2\xD1\xA1\xD4\xF1\x20\x20\x45\x58\x45\x20\xBD\xF8\xC8\xEB", 0);
 	ui_hints("", status_msg, 0);
+	dupdate();
+}
+
+static void draw_set_about(void)
+{
+	ui_clip_x = 128;
+	ui_no_cups = 1;
+	ui_info_right = 0;
+	ui_title("\xB9\xD8\xD3\xDA");
+	draw_ui(2, CONTENT_Y + 1, "FXTXT  1.0", 0);
+	draw_ui(2, CONTENT_Y + 11, "\xC9\xE8\xD6\xC3\x20\x46\x58\x54\x58\x54\x2E\x43\x46\x47", 0);
+	draw_ui(2, CONTENT_Y + 21, "\xD7\xD6\xB4\xCA\x20\x2A\x2E\x49\x4D\x45\x5F\x2A", 0);
+	draw_ui(2, CONTENT_Y + 31, "\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8", 0);
+	ui_hints("", "", 0);
 	dupdate();
 }
 
@@ -4770,17 +4795,34 @@ static void draw_set_unit(void)
 
 static void draw_set_ime(void)
 {
-	char line[64];
+	int total = set_char_n + set_phr_n;
 	ui_clip_x = 128;
-	ui_no_cups = 0;
+	ui_no_cups = 1;
 	ui_info_right = 0;
-	set_bar("\xB3\xA3\xD3\xC3", "\xB6\xCC\xD3\xEF", 0, "\xB0\xEF\xD6\xFA");
 	ui_title_state("\xD7\xD6\xB4\xCA", 1);
-	snprintf(line, sizeof line, "\xB3\xA3\xD3\xC3\xD7\xD6  %d", set_char_n);
-	draw_ui(2, CONTENT_Y + 1, line, 0);
-	snprintf(line, sizeof line, "\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF  %d", set_phr_n);
-	draw_ui(2, CONTENT_Y + 12, line, 0);
-	draw_ui(2, CONTENT_Y + 30, "\x46\x31\x20\xB3\xA3\xD3\xC3\xD7\xD6\x20\x20\x46\x32\x20\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF", 0);
+	if (total == 0) {
+		draw_ui(2, CONTENT_Y + 1, "\x28\xBF\xD5\x29\x20\x46\x31\x20\xBC\xD3\xD7\xD6\x20\x20\x46\x32\x20\xBC\xD3\xB4\xCA", 0);
+		draw_ui(2, CONTENT_Y + 20, "\x45\x58\x45\x20\xB2\xE5\xC8\xEB\x20\x20\x46\x33\x20\xC9\xBE\xB3\xFD\x20\x20\x46\x34\x20\xC7\xB0\xD2\xC6", 0);
+	} else {
+		int top = set_sel - set_sel % 3;
+		int y = CONTENT_Y + 1;
+		for (int k = top; k < total && k < top + 3; k++, y += 10) {
+			int sel = (k == set_sel);
+			if (sel)
+				drect(0, y - 1, TEXT_W - 1, y + 7, INKBAR);
+			int x = 2;
+			if (k < set_char_n) {
+				draw_cell(x, y, set_chars[k], sel);
+			} else {
+				int p = k - set_char_n;
+				for (int j = 0; j < set_phr_len[p]; j++) {
+					draw_cell(x, y, set_phrs[p][j], sel);
+					x += cell_adv(set_phrs[p][j]);
+				}
+			}
+		}
+	}
+	draw_ui(2, STATUS_Y, "\x46\x31\x2F\x46\x32\x20\xCC\xED\xBC\xD3\x20\x20\x46\x33\x20\xC9\xBE\xB3\xFD", 0);
 	ui_hints("", status_msg, 0);
 	dupdate();
 }
@@ -4898,12 +4940,21 @@ static void handle_set_key(key_event_t ev)
 		return;
 	}
 	if (mode == MODE_SET) {
-		if (ev.key == KEY_F1)
-			mode = MODE_SET_INV;
-		else if (ev.key == KEY_F2)
-			mode = MODE_SET_IME;
-		else if (ev.key == KEY_F3)
-			mode = MODE_SET_UNIT;
+		if (ev.key == KEY_UP) {
+			if (set_row > 0)
+				set_row--;
+		} else if (ev.key == KEY_DOWN) {
+			if (set_row < 4)
+				set_row++;
+		} else if (ev.key == KEY_EXE) {
+			switch (set_row) {
+			case 0: mode = MODE_SET_INV; break;
+			case 1: mode = MODE_SET_UNIT; break;
+			case 2: set_sel = 0; mode = MODE_SET_IME; break;
+			case 3: help_page = 0; help_back = MODE_SET; mode = MODE_HELP; break;
+			default: mode = MODE_SET_ABOUT; break;
+			}
+		}
 		return;
 	}
 	if (mode == MODE_SET_INV) {
@@ -4935,12 +4986,66 @@ static void handle_set_key(key_event_t ev)
 		return;
 	}
 	if (mode == MODE_SET_IME) {
-		if (ev.key == KEY_F1) {
-			set_sel = 0;
-			mode = MODE_SET_CHARS;
+		int total = set_char_n + set_phr_n;
+		if (ev.key == KEY_UP) {
+			if (set_sel > 0)
+				set_sel--;
+		} else if (ev.key == KEY_DOWN) {
+			if (set_sel < total - 1)
+				set_sel++;
+		} else if (ev.key == KEY_EXE && total > 0) {
+			if (set_sel < set_char_n) {
+				uint16_t one[1];
+				one[0] = set_chars[set_sel];
+				set_insert(one, 1);
+			} else {
+				set_insert(set_phrs[set_sel - set_char_n],
+				           set_phr_len[set_sel - set_char_n]);
+			}
+		} else if (ev.key == KEY_F1) {
+			open_keyboard(2, PAGE_PINYIN);
 		} else if (ev.key == KEY_F2) {
-			set_sel = 0;
-			mode = MODE_SET_PHR;
+			phr_buf_n = 0;
+			open_keyboard(3, PAGE_PINYIN);
+		} else if (ev.key == KEY_F3 && total > 0) {
+			if (set_sel < set_char_n) {
+				for (int i = set_sel; i < set_char_n - 1; i++)
+					set_chars[i] = set_chars[i + 1];
+				set_char_n--;
+			} else {
+				int p = set_sel - set_char_n;
+				for (int i = p; i < set_phr_n - 1; i++) {
+					memcpy(set_phrs[i], set_phrs[i + 1], sizeof set_phrs[0]);
+					set_phr_len[i] = set_phr_len[i + 1];
+				}
+				set_phr_n--;
+			}
+			if (set_sel >= set_char_n + set_phr_n && set_sel > 0)
+				set_sel--;
+			py_cache_lists();
+			set_saved(ime_save());
+		} else if (ev.key == KEY_F4 && total > 0) {
+			if (set_sel < set_char_n && set_sel > 0) {
+				uint16_t c = set_chars[set_sel];
+				for (int i = set_sel; i > 0; i--)
+					set_chars[i] = set_chars[i - 1];
+				set_chars[0] = c;
+				set_sel = 0;
+			} else if (set_sel >= set_char_n && set_sel > set_char_n) {
+				int p = set_sel - set_char_n;
+				uint16_t tmp[SET_PHR_LEN];
+				int tl = set_phr_len[p];
+				memcpy(tmp, set_phrs[p], sizeof tmp);
+				for (int i = p; i > 0; i--) {
+					memcpy(set_phrs[i], set_phrs[i - 1], sizeof set_phrs[0]);
+					set_phr_len[i] = set_phr_len[i - 1];
+				}
+				memcpy(set_phrs[0], tmp, sizeof tmp);
+				set_phr_len[0] = tl;
+				set_sel = set_char_n;
+			}
+			py_cache_lists();
+			set_saved(ime_save());
 		}
 		return;
 	}
@@ -6302,6 +6407,8 @@ have_memory:
 			draw_set_chars();
 		else if (mode == MODE_SET_PHR)
 			draw_set_phr();
+		else if (mode == MODE_SET_ABOUT)
+			draw_set_about();
 		else
 			draw_keyboard();
 
@@ -6348,7 +6455,7 @@ have_memory:
 			handle_book_key(ev);
 		} else if (mode == MODE_GOTO) {
 			handle_goto_key(ev);
-		} else if (mode >= MODE_SET && mode <= MODE_SET_PHR) {
+		} else if (mode >= MODE_SET && mode <= MODE_SET_ABOUT) {
 			handle_set_key(ev);
 } else if (mode == MODE_HELP) {
 			if (!ev_repeat && ev.key == KEY_LEFT)
