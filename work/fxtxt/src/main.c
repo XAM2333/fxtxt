@@ -157,7 +157,21 @@ static int cur_line, cur_col;
 static int mode = MODE_LIST;
 static int kb_page = PAGE_LOWER;
 static int kb_row, kb_col;
-static int kb_target;			/* 0 = insert, 1 = search */
+static int kb_target;			/* 0 = doc, 1 = search prompt, 2 = 常用字, 3 = 常用词 */
+
+/* the user's own IME lists, edited in the settings pages */
+#define SET_CHAR_MAX 24
+#define SET_PHR_MAX  8
+#define SET_PHR_LEN  12
+
+static uint16_t set_chars[SET_CHAR_MAX];
+static int set_char_n;
+static uint16_t set_phrs[SET_PHR_MAX][SET_PHR_LEN];
+static int set_phr_len[SET_PHR_MAX];
+static int set_phr_n;
+static uint16_t phr_buf[SET_PHR_LEN];	/* the phrase being composed */
+static int phr_buf_n;
+
 static uint16_t kb_cells[24];		/* typed cells (search prompt) */
 static int kb_len;
 static uint16_t search_cells[32];
@@ -2955,9 +2969,9 @@ static void draw_view(void)
 		if (search_n > 0)
 			snprintf(info, sizeof info, "%d/%d", search_cur + 1, search_n);
 		else if (set_unit_lines) {
-			/* line numbers instead of pages */
-			int ln = chunk_lines + offset_to_line(row_start(view_top)) + 1;
-			int tl = total_lines;
+			/* the first visible row of the document, 1-based */
+			int ln = chunk_rows + view_top + 1;
+			int tl = total_rows;
 			if (tl < 1) tl = 1;
 			if (ln < 1) ln = 1;
 			if (ln > tl) ln = tl;
@@ -3636,12 +3650,43 @@ static void text_backspace(void)
 	dirty = 1;
 }
 
-/* Append one cell to the current target (document or search prompt). */
+/* Where the keyboard goes back to when it is done. */
+static void kb_back(void)
+{
+	py_reset();
+	if (kb_target == 2)
+		mode = MODE_SET_CHARS;
+	else if (kb_target == 3)
+		mode = MODE_SET_PHR;
+	else
+		mode = MODE_VIEW;
+}
+
+/* Append one cell to the current target: the document, the search prompt,
+   the frequent-character list (2) or the phrase being composed (3). */
+static void kb_back(void);
+static void set_phrase_commit(void);
+static void open_keyboard(int target, int page);
+
 static void kb_put(uint16_t cell)
 {
 	if (kb_target == 1) {
 		if (kb_len < (int)(sizeof kb_cells / sizeof kb_cells[0]))
 			kb_cells[kb_len++] = cell;
+		return;
+	}
+	if (kb_target == 2) {
+		if (cell && set_char_n < SET_CHAR_MAX) {
+			set_chars[set_char_n++] = cell;
+			set_sel = set_char_n - 1;
+			snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xCC\xED\xBC\xD3");
+			status_sticky = 1;
+		}
+		return;
+	}
+	if (kb_target == 3) {
+		if (cell && phr_buf_n < SET_PHR_LEN)
+			phr_buf[phr_buf_n++] = cell;
 		return;
 	}
 	text_insert(cell);
@@ -3710,9 +3755,13 @@ static void draw_keyboard(void)
 		box_lab[0] = "\xBB\xBB\xD2\xB3";
 		box_lab[5] = "\xCD\xEA\xB3\xC9";
 	}
-	ui_title(punct ? "\xB1\xEA\xB5\xE3\xB7\xFB\xBA\xC5"
-	               : pinyin ? (kb_target == 1 ? "\xC6\xB4\xD2\xF4\xCB\xD1\xCB\xF7" : "\xC6\xB4\xD2\xF4\xCA\xE4\xC8\xEB")
-	                        : (kb_target == 1 ? "\xCB\xD1\xCB\xF7\xCE\xC4\xD7\xD6" : "\xB2\xE5\xC8\xEB\xD7\xD6\xB7\xFB"));
+	if (kb_target == 2 || kb_target == 3) {
+		ui_title(kb_target == 2 ? "\xCC\xED\xBC\xD3\xB3\xA3\xD3\xC3\xD7\xD6" : "\xCC\xED\xBC\xD3\xB3\xA3\xD3\xC3\xB4\xCA");
+	} else {
+		ui_title(punct ? "\xB1\xEA\xB5\xE3\xB7\xFB\xBA\xC5"
+		               : pinyin ? (kb_target == 1 ? "\xC6\xB4\xD2\xF4\xCB\xD1\xCB\xF7" : "\xC6\xB4\xD2\xF4\xCA\xE4\xC8\xEB")
+		                        : (kb_target == 1 ? "\xCB\xD1\xCB\xF7\xCE\xC4\xD7\xD6" : "\xB2\xE5\xC8\xEB\xD7\xD6\xB7\xFB"));
+	}
 
 	int grid_y;
 	if (pinyin) {
@@ -3874,15 +3923,6 @@ static void draw_help(void)
    the image resident, so they survive a menu round trip (writing them to
    \fls0 is what used to make the main menu drop the add-in list). */
 
-static char const *const set_char_gb = "\xB5\xC4\xD2\xBB\xCA\xC7\xB2\xBB\xC1\xCB\xD4\xDA\xC8\xCB\xD3\xD0\xCE\xD2\xCB\xFB\xD5\xE2";
-
-static char const *const set_phr_gb[] = {
-	"\xC4\xFA\xBA\xC3", "\xD0\xBB\xD0\xBB", "\xC7\xEB\xC9\xD4\xB5\xC8", "\xCA\xD5\xB5\xBD",
-};
-#define SET_PHR_N 4
-
-static uint16_t set_chars[24];
-static int set_char_n;
 
 /* GB2312 bytes -> display cells, the same mapping the font tables use */
 static int gb_cells(char const *s, uint16_t *out, int cap)
@@ -3907,8 +3947,25 @@ static int gb_cells(char const *s, uint16_t *out, int cap)
 
 static void set_defaults(void)
 {
-	set_char_n = gb_cells(set_char_gb, set_chars,
-	                      (int)(sizeof set_chars / sizeof set_chars[0]));
+	/* start empty: the lists are the user's own, nothing is preloaded */
+	set_char_n = 0;
+	set_phr_n = 0;
+	phr_buf_n = 0;
+}
+
+/* finish the phrase being composed: append it to the list */
+static void set_phrase_commit(void)
+{
+	if (phr_buf_n > 0 && set_phr_n < SET_PHR_MAX) {
+		for (int i = 0; i < phr_buf_n; i++)
+			set_phrs[set_phr_n][i] = phr_buf[i];
+		set_phr_len[set_phr_n] = phr_buf_n;
+		set_phr_n++;
+		set_sel = set_phr_n - 1;
+		snprintf(status_msg, sizeof status_msg, "\xD2\xD1\xCC\xED\xBC\xD3");
+		status_sticky = 1;
+	}
+	phr_buf_n = 0;
 }
 
 static void open_settings(void)
@@ -4005,7 +4062,7 @@ static void draw_set_ime(void)
 	ui_title("\xCA\xE4\xC8\xEB\xB7\xA8");
 	snprintf(line, sizeof line, "\xB3\xA3\xD3\xC3\xD7\xD6  %d", set_char_n);
 	draw_ui(2, CONTENT_Y + 1, line, 0);
-	snprintf(line, sizeof line, "\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF  %d", SET_PHR_N);
+	snprintf(line, sizeof line, "\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF  %d", set_phr_n);
 	draw_ui(2, CONTENT_Y + 12, line, 0);
 	draw_ui(2, CONTENT_Y + 30, "\x46\x31\x20\xB3\xA3\xD3\xC3\xD7\xD6\x20\x20\x46\x32\x20\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF", 0);
 	ui_hints("", "", 0);
@@ -4017,8 +4074,10 @@ static void draw_set_chars(void)
 	ui_clip_x = 128;
 	ui_no_cups = 0;
 	ui_info_right = 0;
-	set_bar("\xB2\xE5\xC8\xEB", "\xC9\xBE\xB3\xFD", 0, "\xB0\xEF\xD6\xFA");
+	set_bar("\xCC\xED\xBC\xD3", "\xC9\xBE\xB3\xFD", 0, "\xB0\xEF\xD6\xFA");
 	ui_title("\xB3\xA3\xD3\xC3\xD7\xD6");
+	if (!status_msg[0])
+		draw_ui(2, CONTENT_Y + 33, "F1 \xCC\xED\xBC\xD3  EXE \xB2\xE5\xC8\xEB", 0);
 	for (int i = 0; i < set_char_n && i < 24; i++) {
 		int cx = 3 + (i % 8) * 15;
 		int cy = CONTENT_Y + 2 + (i / 8) * 13;
@@ -4030,29 +4089,41 @@ static void draw_set_chars(void)
 		}
 	}
 	if (set_char_n == 0)
-		draw_ui(2, CONTENT_Y + 2, "\x28\xBF\xD5\x29", 0);
+		draw_ui(2, CONTENT_Y + 2, "\x28\xBF\xD5\x29  F1 \xCC\xED\xBC\xD3", 0);
 	ui_hints("", "", 0);
 	dupdate();
 }
 
 static void draw_set_phr(void)
 {
-	uint16_t buf[24];
 	ui_clip_x = 128;
 	ui_no_cups = 0;
 	ui_info_right = 0;
-	set_bar("\xB2\xE5\xC8\xEB", "\xC9\xBE\xB3\xFD", 0, "\xB0\xEF\xD6\xFA");
+	set_bar("\xCC\xED\xBC\xD3", "\xC9\xBE\xB3\xFD", 0, "\xB0\xEF\xD6\xFA");
 	ui_title("\xBF\xEC\xBD\xDD\xB6\xCC\xD3\xEF");
-	for (int i = 0; i < SET_PHR_N; i++) {
+	if (set_phr_n == 0 && phr_buf_n == 0)
+		draw_ui(2, CONTENT_Y + 1, "\x28\xBF\xD5\x29  F1 \xCC\xED\xBC\xD3", 0);
+	for (int i = 0; i < set_phr_n; i++) {
 		int y = CONTENT_Y + 1 + i * 10;
-		int n = gb_cells(set_phr_gb[i], buf, 24);
 		if (i == set_sel)
 			drect(0, y - 1, TEXT_W - 1, y + 7, INKBAR);
 		int x = 3;
-		for (int k = 0; k < n; k++) {
-			draw_cell(x, y, buf[k], i == set_sel);
-			x += cell_adv(buf[k]);
+		for (int k = 0; k < set_phr_len[i]; k++) {
+			draw_cell(x, y, set_phrs[i][k], i == set_sel);
+			x += cell_adv(set_phrs[i][k]);
 		}
+	}
+	if (phr_buf_n > 0) {
+		/* the phrase being typed, on the line above the F bar */
+		int x = 2;
+		int y = CONTENT_Y + 26;
+		draw_ui(2, y - 9, "\xCA\xE4\xC8\xEB\xD6\xD0\xA3\xBA", 0);
+		for (int k = 0; k < phr_buf_n; k++) {
+			draw_cell(x, y, phr_buf[k], 0);
+			x += cell_adv(phr_buf[k]);
+		}
+		for (int k = 0; k < 7; k++)
+			ink(x + 1, y + k);
 	}
 	ui_hints("", "", 0);
 	dupdate();
@@ -4153,9 +4224,12 @@ static void handle_set_key(key_event_t ev)
 		} else if (ev.key == KEY_DOWN) {
 			if (set_sel + cols < set_char_n)
 				set_sel += cols;
-		} else if (ev.key == KEY_EXE || ev.key == KEY_F1) {
+		} else if (ev.key == KEY_EXE) {
 			if (set_char_n > 0)
 				set_insert(&set_chars[set_sel], 1);
+		} else if (ev.key == KEY_F1) {
+			status_msg[0] = 0;
+			open_keyboard(2, PAGE_PINYIN);
 		} else if (ev.key == KEY_F2) {
 			if (set_char_n > 0) {
 				for (int i = set_sel; i + 1 < set_char_n; i++)
@@ -4172,12 +4246,26 @@ static void handle_set_key(key_event_t ev)
 			if (set_sel > 0)
 				set_sel--;
 		} else if (ev.key == KEY_DOWN) {
-			if (set_sel < SET_PHR_N - 1)
+			if (set_sel < set_phr_n - 1)
 				set_sel++;
-		} else if (ev.key == KEY_EXE || ev.key == KEY_F1) {
-			uint16_t buf[24];
-			int n = gb_cells(set_phr_gb[set_sel], buf, 24);
-			set_insert(buf, n);
+		} else if (ev.key == KEY_EXE) {
+			if (set_phr_n > 0)
+				set_insert(set_phrs[set_sel], set_phr_len[set_sel]);
+		} else if (ev.key == KEY_F1) {
+			status_msg[0] = 0;
+			phr_buf_n = 0;
+			open_keyboard(3, PAGE_PINYIN);
+		} else if (ev.key == KEY_F2) {
+			if (set_phr_n > 0) {
+				for (int i = set_sel; i + 1 < set_phr_n; i++) {
+					for (int k = 0; k < SET_PHR_LEN; k++)
+						set_phrs[i][k] = set_phrs[i + 1][k];
+					set_phr_len[i] = set_phr_len[i + 1];
+				}
+				set_phr_n--;
+				if (set_sel >= set_phr_n && set_sel > 0)
+					set_sel--;
+			}
 		}
 		return;
 	}
@@ -4416,7 +4504,7 @@ static void draw_book(void)
 		   uses -- bug: the slots used to be rows while the title said 行 */
 		char head[24];
 		int here = set_unit_lines
-			? chunk_lines + offset_to_line(row_start(view_top)) + 1
+			? chunk_rows + view_top + 1
 			: (chunk_rows + view_top) / rows() + 1;
 		snprintf(head, sizeof head, "\xCA\xE9\xC7\xA9\x20%s%d",
 		         set_unit_lines ? "\xD0\xD0" : "\xD2\xB3", here);
@@ -4878,6 +4966,8 @@ static void handle_kb_key(key_event_t ev)
 			if (py_candidates() > 0) {
 				kb_put(py_candidate(py_pick));
 				py_reset();
+				if (kb_target == 2)	/* back to the list, one cell added */
+					kb_back();
 			}
 		}
 		return;
@@ -4887,10 +4977,8 @@ static void handle_kb_key(key_event_t ev)
 			uint16_t pc = pick >= 0 ? punct_cell(pick) : 0;
 			if (pc) {
 				kb_put(pc);
-				if (kb_target == 0) {		/* back to the document */
-					py_reset();
-					mode = MODE_VIEW;
-				}
+				if (kb_target == 0 || kb_target == 2)
+					kb_back();
 			}
 			return;
 		}
@@ -4902,10 +4990,8 @@ static void handle_kb_key(key_event_t ev)
 			}
 		} else if (ch) {
 			kb_type(ch);
-			if (kb_target == 0) {			/* back to the document */
-				py_reset();
-				mode = MODE_VIEW;
-			}
+			if (kb_target == 0 || kb_target == 2)
+				kb_back();
 		}
 		return;
 	case KEY_F6:
@@ -4913,9 +4999,10 @@ static void handle_kb_key(key_event_t ev)
 		if (kb_target == 1) {
 			run_search();
 			kb_target = 0;
+		} else if (kb_target == 3) {
+			set_phrase_commit();
 		}
-		py_reset();
-		mode = MODE_VIEW;
+		kb_back();
 		return;
 	default:
 		return;
