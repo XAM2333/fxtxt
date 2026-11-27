@@ -1887,7 +1887,8 @@ static char name_buf[64];
 static int name_len;
 static int name_pos;
 static int create_ok;		/* 1 = created (open it), 2 = renamed (back) */
-static int name_rename;		/* prompt is renaming the selected file */
+static int name_rename;
+static uint16_t const *name_src_fc;	/* the FC the listing produced */		/* prompt is renaming the selected file */
 
 /* gint's fx port has no BFile_Rename syscall, so a rename is a copy followed
    by a delete. Returns 0 on success, -2 when the file is too large to copy. */
@@ -1906,8 +1907,11 @@ static int name_copy_file(char const *oldn, char const *newn)
 
 	if (!buf)
 		return -1;
-	/* read: BFile first, the stdio view as a fallback */
-	txt_fc(fc, 64, oldn);
+	/* read: the very FC the listing produced, so the spelling always matches */
+	if (name_src_fc)
+		memcpy(fc, name_src_fc, sizeof fc);
+	else
+		txt_fc(fc, 64, oldn);
 	fd = BFile_Open(fc, BFile_ReadOnly);
 	if (fd >= 0) {
 		n = BFile_Read(fd, buf, CAP - 2, -1);
@@ -1961,7 +1965,9 @@ static int name_copy_file(char const *oldn, char const *newn)
 
 static int name_rename_copy(char const *oldn, char const *newn)
 {
+	name_src_fc = names_fc[list_sel];
 	int rc = name_copy_file(oldn, newn);
+	name_src_fc = NULL;
 	char op[NAME_MAX_L + 6], np[NAME_MAX_L + 6];
 	size_t n;
 
@@ -2021,6 +2027,7 @@ static void name_begin_rename(void)
 	name_len = (int)strlen(name_buf);
 	name_pos = name_len;
 	name_rename = 1;
+	name_src_fc = names_fc[list_sel];
 }
 
 /* Characters that may appear in a file name (FAT illegal set excluded). */
