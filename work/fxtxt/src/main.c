@@ -1924,7 +1924,7 @@ static int name_copy_file(char const *oldn, char const *newn)
 	}
 	if (n < 0) {
 		free(buf);
-		return -1;
+		return -1;	/* code 1: the source could not be read */
 	}
 	if (n & 1)
 		buf[n] = 0;		/* pad to an even length */
@@ -1944,12 +1944,12 @@ static int name_copy_file(char const *oldn, char const *newn)
 			FILE *out = open_any(pn, "wb");
 			if (!out) {
 				free(buf);
-				return -1;
+				return -2;	/* code 2: no way to create the target */
 			}
 			if ((int)fwrite(buf, 1, (size_t)sz, out) != sz) {
 				fclose(out);
 				free(buf);
-				return -1;
+				return -3;	/* code 3: the write fell short */
 			}
 			fclose(out);
 		}
@@ -2086,7 +2086,9 @@ static void name_commit(void)
 			return;
 		}
 		if (rc != 0) {
-			snprintf(status_msg, sizeof status_msg, "\xB8\xC4\xC3\xFB\xCA\xA7\xB0\xDC");
+			char why[64];
+			snprintf(why, sizeof why, "\xB8\xC4\xC3\xFB\xCA\xA7\xB0\xDC %d", rc);
+			snprintf(status_msg, sizeof status_msg, "%s", why);
 			return;
 		}
 		name_rename = 0;	/* only a successful rename leaves the page */
@@ -6179,6 +6181,7 @@ static void handle_list_key(key_event_t ev)
 		}
 		name_rename = 0;
 		gint_world_switch(GINT_CALL(name_default));
+		name_pos = name_len;	/* the caret waits after the default name */
 		mode = MODE_NAME;
 		return;
 	case KEY_F2:
