@@ -3241,7 +3241,7 @@ static void draw_view(void)
 		         edit_mode);
 		ui_info_right = 0;
 	}
-	if (next_icon)
+	if (next_icon && mode == MODE_VIEW)
 		draw_next_icon(112, 57);
 	dupdate();
 }
@@ -6009,6 +6009,11 @@ static void fs_delete_pos_for(char const *name)
 	else
 		strcpy(pn + n, ".POS");
 	fs_delete_path(pn);
+	if (strcmp(cur_dir, "\\\\fls0") != 0) {
+		char full[NAME_MAX_L + 40];
+		snprintf(full, sizeof full, "%s\\%s", cur_dir, pn);
+		fs_delete_path(full);
+	}
 }
 
 static void fs_delete_selected(void)
