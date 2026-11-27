@@ -197,6 +197,14 @@ static int phr_buf_n;
    documented as unreliable, and it is not worth risking on every key) */
 static char ime_name[40];
 
+/* syllable of every quick character and of every character inside a phrase,
+   filled once when the lists are loaded or edited so the candidate row never
+   has to scan the 9 KB pinyin table while typing */
+#define SET_PY_NONE (-1)
+static signed short set_char_py[SET_CHAR_MAX];
+static signed char phr_py[SET_PHR_MAX][SET_PHR_LEN];
+static void py_cache_lists(void);
+
 static uint16_t kb_cells[24];		/* typed cells (search prompt) */
 static int kb_len;
 static uint16_t search_cells[32];
@@ -220,6 +228,8 @@ static int py_candidates(void);
 static void py_reset(void);
 static void run_search(void);
 static uint16_t py_candidate(int i);
+static int py_candidate_cells(int i, uint16_t *out);
+static int py_candidate_w(int i);
 
 /*=== geometry =============================================================*/
 
@@ -2973,15 +2983,18 @@ static void comp_draw(void)
 	x = 44;
 	for (int i = 0; i < shown; i++) {
 		int idx = start + i;
-		if (idx >= n || x + 9 > 127)
+		uint16_t cc[SET_PHR_LEN];
+		int cl = py_candidate_cells(idx, cc);
+		int cw = py_candidate_w(idx);
+		if (idx >= n || cl <= 0 || x + cw > 127)
 			break;
-		if (idx == py_pick) {
-			drect(x - 1, STATUS_Y - 1, x + 8, STATUS_Y + 7, INKBAR);
-			draw_cell(x, STATUS_Y, py_candidate(idx), 1);
-		} else {
-			draw_cell(x, STATUS_Y, py_candidate(idx), 0);
+		if (idx == py_pick)
+			drect(x - 1, STATUS_Y - 1, x + cw, STATUS_Y + 7, INKBAR);
+		for (int k = 0; k < cl; k++) {
+			draw_cell(x, STATUS_Y, cc[k], idx == py_pick);
+			x += cell_adv(cc[k]);
 		}
-		x += 10;
+		x += 2;
 	}
 }
 
@@ -3206,17 +3219,187 @@ static int py_match(void)
 	return -1;
 }
 
+/*=== candidate row ========================================================
+   One entry may be a single character or a whole stored phrase, so the row is
+   built once per keystroke into py_ent[][] and everything (drawing, picking,
+   inserting) walks that array instead of py_glyph directly. */
+
+#define PY_ENT_MAX 12		/* what the row can show anyway */
+#define PY_ENT_PHRASE 0x8000u
+static uint16_t py_src[PY_ENT_MAX];	/* cell, or PY_ENT_PHRASE | phrase index */
+static int py_ent_count;
+
+/* the syllable a glyph belongs to, or SET_PY_NONE */
+static int py_syllable_of(uint16_t cell)
+{
+	int g = (int)cell - (int)CELL_CJK;
+	if (g < 0)
+		return SET_PY_NONE;
+	for (int s = 0; s < PY_COUNT; s++) {
+		int a = py_start[s], b = py_start[s + 1];
+		for (int i = a; i < b; i++)
+			if (py_glyph[i] == g)
+				return s;
+	}
+	return SET_PY_NONE;
+}
+
+/* Remember what each list character resolves to. The table scan is the
+   expensive part, so identical characters are looked up only once (a phrase
+   list repeats characters a lot). */
+static void py_cache_lists(void)
+{
+	uint16_t seen[SET_CHAR_MAX + SET_PHR_MAX * SET_PHR_LEN];
+	signed short seen_py[SET_CHAR_MAX + SET_PHR_MAX * SET_PHR_LEN];
+	int sn = 0;
+
+	for (int i = 0; i < SET_CHAR_MAX; i++)
+		set_char_py[i] = SET_PY_NONE;
+	for (int w = 0; w < SET_PHR_MAX; w++)
+		for (int c = 0; c < SET_PHR_LEN; c++)
+			phr_py[w][c] = (signed char)SET_PY_NONE;
+
+#define PY_LOOKUP(cell)                                                       \
+	({                                                                     \
+		int _py = SET_PY_NONE;                                          \
+		for (int _k = 0; _k < sn; _k++)                                 \
+			if (seen[_k] == (cell)) {                                \
+				_py = seen_py[_k];                                \
+				break;                                            \
+			}                                                             \
+		if (_py == SET_PY_NONE && sn < (int)(sizeof seen / sizeof seen[0])) { \
+			_py = py_syllable_of(cell);                               \
+			seen[sn] = (cell);                                        \
+			seen_py[sn++] = (signed short)_py;                        \
+		}                                                             \
+		_py;                                                          \
+	})
+
+	for (int i = 0; i < set_char_n; i++)
+		set_char_py[i] = (signed short)PY_LOOKUP(set_chars[i]);
+	for (int w = 0; w < set_phr_n; w++)
+		for (int c = 0; c < set_phr_len[w]; c++)
+			phr_py[w][c] = (signed char)PY_LOOKUP(set_phrs[w][c]);
+#undef PY_LOOKUP
+}
+
+/* typed letters are a prefix of the phrase's initials */
+static int phr_initials_hit(int w)
+{
+	int k = 0;
+	for (int c = 0; c < set_phr_len[w]; c++) {
+		int s = phr_py[w][c];
+		if (s < 0)
+			return 0;
+		if (k >= py_len)
+			return 1;
+		if (py_names[py_off[s]] != py_buf[k])
+			return 0;
+		k++;
+	}
+	return k >= py_len;
+}
+
+/* typed letters are a prefix of the phrase's full pinyin */
+static int phr_full_hit(int w)
+{
+	int k = 0;
+	for (int c = 0; c < set_phr_len[w]; c++) {
+		int s = phr_py[w][c];
+		if (s < 0)
+			return 0;
+		char const *nm = py_names + py_off[s];
+		for (int i = 0; nm[i]; i++) {
+			if (k >= py_len)
+				return 1;
+			if (nm[i] != py_buf[k])
+				return 0;
+			k++;
+		}
+	}
+	return k >= py_len;
+}
+
+static void py_entries_build(void)
+{
+	py_ent_count = 0;
+	/* the user's own characters come first, in list order */
+	if (py_syllable >= 0) {
+		for (int i = 0; i < set_char_n && py_ent_count < PY_ENT_MAX; i++) {
+			if (set_char_py[i] != py_syllable)
+				continue;
+			py_src[py_ent_count++] = set_chars[i];
+		}
+	}
+	/* stored phrases need two or more letters before they show up */
+	if (py_len >= 2) {
+		for (int w = 0; w < set_phr_n && py_ent_count < PY_ENT_MAX; w++) {
+			if (set_phr_len[w] < 1)
+				continue;
+			if (!phr_initials_hit(w) && !phr_full_hit(w))
+				continue;
+			py_src[py_ent_count++] = (uint16_t)(PY_ENT_PHRASE | w);
+		}
+	}
+	/* then the syllable's own glyphs, minus the ones already on top */
+	if (py_syllable >= 0) {
+		int base = py_start[py_syllable];
+		int cnt = py_start[py_syllable + 1] - base;
+		for (int i = 0; i < cnt && py_ent_count < PY_ENT_MAX; i++) {
+			uint16_t c = (uint16_t)(CELL_CJK + py_glyph[base + i]);
+			int dup = 0;
+			for (int k = 0; k < py_ent_count; k++) {
+				if (py_src[k] == c) {
+					dup = 1;
+					break;
+				}
+			}
+			if (dup)
+				continue;
+			py_src[py_ent_count++] = c;
+		}
+	}
+}
+
 static int py_candidates(void)
 {
-	if (py_syllable < 0)
+	return py_ent_count;
+}
+
+static int py_candidate_cells(int i, uint16_t *out)
+{
+	if (i < 0 || i >= py_ent_count)
 		return 0;
-	return py_start[py_syllable + 1] - py_start[py_syllable];
+	uint16_t s = py_src[i];
+
+	if (s & PY_ENT_PHRASE) {
+		int w = (int)(s & ~PY_ENT_PHRASE);
+		if (w < 0 || w >= set_phr_n)
+			return 0;
+		for (int c = 0; c < set_phr_len[w]; c++)
+			out[c] = set_phrs[w][c];
+		return set_phr_len[w];
+	}
+	out[0] = s;
+	return 1;
 }
 
 static uint16_t py_candidate(int i)
 {
-	int g = py_glyph[py_start[py_syllable] + i];
-	return (uint16_t)(CELL_CJK + g);
+	uint16_t out[SET_PHR_LEN];
+
+	return py_candidate_cells(i, out) > 0 ? out[0] : 0;
+}
+
+static int py_candidate_w(int i)
+{
+	uint16_t cc[SET_PHR_LEN];
+	int n = py_candidate_cells(i, cc);
+	int w = 0;
+
+	for (int k = 0; k < n; k++)
+		w += cell_adv(cc[k]);
+	return w;
 }
 
 static void py_reset(void)
@@ -3225,12 +3408,14 @@ static void py_reset(void)
 	py_buf[0] = 0;
 	py_syllable = -1;
 	py_pick = 0;
+	py_ent_count = 0;
 }
 
 static void py_refresh(void)
 {
 	py_syllable = py_match();
 	py_pick = 0;
+	py_entries_build();
 }
 
 /* Cell of the n-th punctuation mark (0 if the index runs past the list). */
@@ -3436,15 +3621,18 @@ static void draw_search(void)
 		int cx = 40;
 		for (int i = 0; i < shown; i++) {
 			int idx = start + i;
-			if (idx >= n || cx + 9 > 127)
+			uint16_t cc[SET_PHR_LEN];
+			int cl = py_candidate_cells(idx, cc);
+			int cw = py_candidate_w(idx);
+			if (idx >= n || cl <= 0 || cx + cw > 127)
 				break;
-			if (idx == py_pick) {
-				drect(cx - 1, y - 1, cx + 8, y + 7, INKBAR);
-				draw_cell(cx, y, py_candidate(idx), 1);
-			} else {
-				draw_cell(cx, y, py_candidate(idx), 0);
+			if (idx == py_pick)
+				drect(cx - 1, y - 1, cx + cw, y + 7, INKBAR);
+			for (int k = 0; k < cl; k++) {
+				draw_cell(cx, y, cc[k], idx == py_pick);
+				cx += cell_adv(cc[k]);
 			}
-			cx += 10;
+			cx += 2;
 		}
 	}
 	ui_hints(py_len ? "EXE\xC9\xCF\xC6\xC1 \xA1\xFB\xA1\xFA\xD1\xA1" : "EXE\xCB\xD1\xCB\xF7 EXIT\xCD\xCB", "", 1);
@@ -3491,7 +3679,12 @@ static void handle_search_key(key_event_t ev)
 		case KEY_EXE:
 			if (n > 0) {
 				if (search_len < 31)
-					search_cells[search_len++] = py_candidate(py_pick);
+					{
+					uint16_t cc[SET_PHR_LEN];
+					int cl = py_candidate_cells(py_pick, cc);
+					for (int k = 0; k < cl && search_len < (int)(sizeof search_cells / sizeof search_cells[0]); k++)
+						search_cells[search_len++] = cc[k];
+				}
 				py_reset();
 				return;
 			}
@@ -3732,6 +3925,7 @@ static void kb_put(uint16_t cell)
 		if (set_char_n < SET_CHAR_MAX) {
 			set_chars[set_char_n++] = cell;
 			set_sel = set_char_n - 1;
+			py_cache_lists();
 			set_saved(ime_save());
 		}
 		return;
@@ -3836,15 +4030,18 @@ static void draw_keyboard(void)
 			int x = 2;
 			for (int i = 0; i < shown; i++) {
 				int idx = start + i;
-				if (idx >= ncand || x + 10 > 126)
+				uint16_t cc[SET_PHR_LEN];
+				int cl = py_candidate_cells(idx, cc);
+				int cw = py_candidate_w(idx);
+				if (idx >= ncand || cl <= 0 || x + cw > 126)
 					break;
-				if (idx == py_pick) {
-					drect(x - 1, y - 1, x + 9, y + 9, INKBAR);
-					draw_cell(x + 1, y, py_candidate(idx), 1);
-				} else {
-					draw_cell(x + 1, y, py_candidate(idx), 0);
+				if (idx == py_pick)
+					drect(x - 1, y - 1, x + cw, y + 9, INKBAR);
+				for (int k = 0; k < cl; k++) {
+					draw_cell(x, y, cc[k], idx == py_pick);
+					x += cell_adv(cc[k]);
 				}
-				x += 11;
+				x += 2;
 			}
 		} else if (py_len) {
 			draw_ui(2, y, "\xCE\xDE\xC6\xA5\xC5\xE4", 0);
@@ -4306,13 +4503,17 @@ static void ime_load(void)
 	if (!ime_name[0] && ime_find(ime_name, sizeof ime_name) < 0)
 		snprintf(ime_name, sizeof ime_name, "%s", IME_FILE);
 	n = txt_load(ime_name, (char *)b, sizeof b);
-	if (n <= 0)
+	if (n <= 0) {
+		py_cache_lists();
 		return;
+	}
 	if (n >= 8 && !memcmp(b, IME_MAGIC, 4)) {
 		ime_load_bin(b, n);
+		py_cache_lists();
 		return;
 	}
 	ime_load_text((char *)b);	/* plain text still works */
+	py_cache_lists();
 }
 
 /* say whether a save landed: the settings pages have no other feedback */
@@ -4349,6 +4550,7 @@ static void set_phrase_commit(void)
 		set_phr_len[set_phr_n] = phr_buf_n;
 		set_phr_n++;
 		set_sel = set_phr_n - 1;
+		py_cache_lists();
 		set_saved(ime_save());
 	}
 	phr_buf_n = 0;
@@ -4458,7 +4660,7 @@ static void draw_set_chars(void)
 	ui_clip_x = 128;
 	ui_no_cups = 0;
 	ui_info_right = 0;
-	set_bar("\xCC\xED\xBC\xD3", "\xC9\xBE\xB3\xFD", 0, "\xB0\xEF\xD6\xFA");
+	set_bar("\xCC\xED\xBC\xD3", "\xC9\xBE\xB3\xFD", "\xC7\xB0\xD2\xC6", "\xB0\xEF\xD6\xFA");
 	ui_title("\xB3\xA3\xD3\xC3\xD7\xD6");
 	draw_ui(2, CONTENT_Y + 33, "F1 \xCC\xED\xBC\xD3  EXE \xB2\xE5\xC8\xEB", 0);
 	for (int i = 0; i < set_char_n && i < 24; i++) {
@@ -4636,6 +4838,19 @@ static void handle_set_key(key_event_t ev)
 				set_char_n--;
 				if (set_sel >= set_char_n && set_sel > 0)
 					set_sel--;
+				py_cache_lists();
+				set_saved(ime_save());
+			}
+		} else if (ev.key == KEY_F3) {
+			/* 前移: the list order is the candidate order, so this is
+			   how a character is put in front of the others */
+			if (set_char_n > 0 && set_sel > 0) {
+				uint16_t c = set_chars[set_sel];
+				for (int i = set_sel; i > 0; i--)
+					set_chars[i] = set_chars[i - 1];
+				set_chars[0] = c;
+				set_sel = 0;
+				py_cache_lists();
 				set_saved(ime_save());
 			}
 		}
@@ -4665,6 +4880,7 @@ static void handle_set_key(key_event_t ev)
 				set_phr_n--;
 				if (set_sel >= set_phr_n && set_sel > 0)
 					set_sel--;
+				py_cache_lists();
 				set_saved(ime_save());
 			}
 		}
@@ -5057,7 +5273,12 @@ static void handle_view_key(key_event_t ev)
 			return;
 		case KEY_EXE:
 			if (n > 0)
-				text_insert(py_candidate(py_pick));
+				{
+					uint16_t cc[SET_PHR_LEN];
+					int cl = py_candidate_cells(py_pick, cc);
+					for (int k = 0; k < cl; k++)
+						text_insert(cc[k]);
+				}
 			py_reset();
 			return;
 		case KEY_DEL:
@@ -5365,7 +5586,12 @@ static void handle_kb_key(key_event_t ev)
 	case KEY_F5:
 		if (pinyin) {
 			if (py_candidates() > 0) {
-				kb_put(py_candidate(py_pick));
+				{
+					uint16_t cc[SET_PHR_LEN];
+					int cl = py_candidate_cells(py_pick, cc);
+					for (int k = 0; k < cl; k++)
+						kb_put(cc[k]);
+				}
 				py_reset();
 				if (kb_target == 2)	/* back to the list, one cell added */
 					kb_back();
