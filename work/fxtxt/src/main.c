@@ -5656,6 +5656,15 @@ static void handle_view_key(key_event_t ev)
 			if (c && ev.shift && c >= 'a' && c <= 'z')
 				c = (char)(c - 32);
 		}
+		if (!c && !ev.alpha && ev.shift) {
+			switch (ev.key) {
+			case KEY_MUL: c = '{'; break;
+			case KEY_DIV: c = '}'; break;
+			case KEY_ADD: c = '['; break;
+			case KEY_SUB: c = ']'; break;
+			default: break;
+			}
+		}
 		if (!c && !ev.alpha && !ev.shift &&
 		    !(ev.key >= KEY_F1 && ev.key <= KEY_F6) &&
 		    ev.key != KEY_EXE && ev.key != KEY_EXIT && ev.key != KEY_DEL &&
@@ -6423,6 +6432,15 @@ have_memory:
 			app_release();
 			gint_poweroff(1);
 			break;
+		}
+		if (ev.key == KEY_MENU && ev.shift) {
+			/* buglist2 12: SHIFT+MENU is the shortcut to the settings */
+			alpha_lock = 0;
+			shift_armed = 0;
+			alpha_armed = 0;
+			py_reset();
+			open_settings();
+			continue;
 		}
 		if (ev.key == KEY_MENU) {
 			/* The OS's USB dialog only appears in the main menu, and an
