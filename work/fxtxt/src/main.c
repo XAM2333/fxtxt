@@ -6055,8 +6055,22 @@ static void handle_kb_key(key_event_t ev)
 		             ev.key == KEY_LEFT || ev.key == KEY_RIGHT ||
 		             ev.key == KEY_DEL || ev.key == KEY_ACON;
 		char c = ui_key ? 0 : ev_letter(ev);
-		if (!c && !ui_key && !ev.shift && pinyin)
-			c = alpha_letter(ev.key);
+		if (!c && !ui_key) {
+			/* a plain key types the character printed on it, exactly like
+			   the editor does: no F6, no ALPHA needed for letters */
+			char k = key_ascii(ev.key);
+			if (k >= ' ' && k < 127)
+				c = k;
+		}
+		if (!c && !ui_key && alpha_lock) {
+			/* same overlay table as the editor: locked ALPHA types the
+			   printed symbol, SHIFT makes it upper case */
+			c = alpha_symbol(ev.key);
+			if (!c)
+				c = alpha_letter(ev.key);
+			if (c && ev.shift && c >= 'a' && c <= 'z')
+				c = (char)(c - 32);
+		}
 		if (c) {
 			if (pinyin) {
 				if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z')) {
