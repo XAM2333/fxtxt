@@ -5028,11 +5028,11 @@ static void draw_set_ime(void)
 	ui_info_right = 0;
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = NULL;
-	box_lab[0] = "\xD4\xF6";	/* 增 */
-	box_lab[1] = "\xB4\xCA";	/* 词 */
-	box_lab[2] = "\xC9\xBE";	/* 删 */
-	box_lab[3] = "\xD2\xC6";	/* 移 */
-	box_lab[5] = "\xD6\xFA";	/* 助 */
+	box_lab[0] = "\xBC\xD3\xD7\xD6";	/* 增 */
+	box_lab[1] = "\xBC\xD3\xB4\xCA";	/* 词 */
+	box_lab[2] = "\xC9\xBE\xB3\xFD";	/* 删 */
+	box_lab[3] = "\xC7\xB0\xD2\xC6";	/* 移 */
+	box_lab[5] = "\xB0\xEF\xD6\xFA";	/* 助 */
 	ui_title_state("\xD7\xD6\xB4\xCA", 1);
 	if (total == 0) {
 		draw_ui(2, CONTENT_Y + 2, "\x28\xBF\xD5\x29\x20\x20\x46\x31\x20\xBC\xD3\xD7\xD6\x20\x20\x20\x46\x32\x20\xBC\xD3\xB4\xCA", 0);
