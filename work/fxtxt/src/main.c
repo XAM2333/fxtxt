@@ -5025,7 +5025,7 @@ static void draw_set_about(void)
 	ui_no_cups = 1;
 	ui_info_right = 0;
 	ui_title("\xB9\xD8\xD3\xDA");
-	draw_ui(2, CONTENT_Y + 1, "FXTXT  1.0", 0);
+	draw_ui(2, CONTENT_Y + 1, "FXTXT  1.2.0", 0);
 	draw_ui(2, CONTENT_Y + 11, "\xC9\xE8\xD6\xC3\x20\x46\x58\x54\x58\x54\x2E\x43\x46\x47", 0);
 	draw_ui(2, CONTENT_Y + 21, "\xD7\xD6\xB4\xCA\x20\x2A\x2E\x49\x4D\x45\x5F\x2A", 0);
 	draw_ui(2, CONTENT_Y + 31, "\x45\x58\x49\x54\x20\xB7\xB5\xBB\xD8", 0);
