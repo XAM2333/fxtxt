@@ -82,6 +82,7 @@ enum { PAGE_PINYIN = 0, PAGE_PUNCT, PAGE_LOWER, PAGE_UPPER, PAGE_DIGIT, PAGE_SYM
 
 /* settings: plain statics, so they survive a menu round trip exactly like
    the bookmarks and the reading position do */
+static int cfg_dirty;		/* 1 = changed, not written yet */
 static int set_inv;		/* 1 = inverse video */
 static int set_unit_lines;	/* 1 = the reader counter shows lines */
 static int set_from;		/* page the settings were opened from */
@@ -4978,6 +4979,7 @@ static void draw_set(void)
 		box_lab[0] = "\xBD\xF8\xC8\xEB";	/* 进入 */
 		break;
 	}
+	box_lab[5] = "\xB1\xA3\xB4\xE6";	/* F6 saves the settings */
 	ui_no_cups = 0;
 	ui_title("\xC9\xE8\xD6\xC3");
 	for (int i = 0; i < 5; i++) {
@@ -5165,6 +5167,17 @@ static void handle_set_key(key_event_t ev)
 			mode = MODE_SET;
 		return;
 	}
+	if (ev.key == KEY_F6 &&
+	    (mode == MODE_SET || mode == MODE_SET_INV || mode == MODE_SET_UNIT)) {
+		if (cfg_save() == 0) {
+			cfg_load();
+			cfg_dirty = 0;
+			set_saved(0);
+		} else {
+			set_saved(-1);
+		}
+		return;
+	}
 	if (ev.key == KEY_F6) {
 		help_page = 0;		/* buglist2 15: help always starts on page 1 */
 		help_back = mode;
@@ -5183,17 +5196,15 @@ static void handle_set_key(key_event_t ev)
 			if (set_row == 0 && ev.key != KEY_EXE) {
 				if (set_inv == on) { status_msg[0] = 0; return; }
 				set_inv = on, ui_inv = on;
-				int rc = cfg_save();
-				cfg_load();
-				set_saved(rc == 0 && set_inv == on ? 0 : -1);
+				cfg_dirty = 1;
+				snprintf(status_msg, sizeof status_msg, "\xCE\xB4\xB1\xA3\xB4\xE6");
 				return;
 			}
 			if (set_row == 1 && ev.key != KEY_EXE) {
 				if (set_unit_lines == on) { status_msg[0] = 0; return; }
 				set_unit_lines = on;
-				int rc = cfg_save();
-				cfg_load();
-				set_saved(rc == 0 && set_unit_lines == on ? 0 : -1);
+				cfg_dirty = 1;
+				snprintf(status_msg, sizeof status_msg, "\xCE\xB4\xB1\xA3\xB4\xE6");
 				return;
 			}
 			switch (set_row) {
@@ -5209,28 +5220,24 @@ static void handle_set_key(key_event_t ev)
 	if (mode == MODE_SET_INV) {
 		if (ev.key == KEY_F1) {
 			set_inv = 0, ui_inv = 0;
-			int rc = cfg_save();
-			cfg_load();
-			set_saved(rc == 0 && !set_inv ? 0 : -1);
+			cfg_dirty = 1;
+			snprintf(status_msg, sizeof status_msg, "\xCE\xB4\xB1\xA3\xB4\xE6");
 		} else if (ev.key == KEY_F2) {
 			set_inv = 1, ui_inv = 1;
-			int rc = cfg_save();
-			cfg_load();
-			set_saved(rc == 0 && set_inv ? 0 : -1);
+			cfg_dirty = 1;
+			snprintf(status_msg, sizeof status_msg, "\xCE\xB4\xB1\xA3\xB4\xE6");
 		}
 		return;
 	}
 	if (mode == MODE_SET_UNIT) {
 		if (ev.key == KEY_F1) {
 			set_unit_lines = 0;
-			int rc = cfg_save();
-			cfg_load();
-			set_saved(rc == 0 && !set_unit_lines ? 0 : -1);
+			cfg_dirty = 1;
+			snprintf(status_msg, sizeof status_msg, "\xCE\xB4\xB1\xA3\xB4\xE6");
 		} else if (ev.key == KEY_F2) {
 			set_unit_lines = 1;
-			int rc = cfg_save();
-			cfg_load();
-			set_saved(rc == 0 && set_unit_lines ? 0 : -1);
+			cfg_dirty = 1;
+			snprintf(status_msg, sizeof status_msg, "\xCE\xB4\xB1\xA3\xB4\xE6");
 		}
 		return;
 	}
