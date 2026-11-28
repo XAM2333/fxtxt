@@ -4313,11 +4313,9 @@ static void draw_keyboard(void)
 		box_lab[0] = "\xBB\xBB\xD2\xB3";	/* 换页 */
 		box_lab[5] = "\xCD\xEA\xB3\xC9";	/* 完成 */
 	} else if (pinyin) {
-		box_lab[0] = "\xBB\xBB\xD2\xB3";
-		box_lab[2] = "\xCF\xC2\xD1\xA1";	/* 下选 */
-		box_lab[3] = "\xC9\xCF\xD1\xA1";	/* 上选 */
-		box_lab[4] = "\xC9\xCF\xC6\xC1";	/* 上屏 */
-		box_lab[5] = "\xCD\xEA\xB3\xC9";
+		ui_no_cups = 1;
+		draw_ui(2, STATUS_Y,
+		        "\xA1\xFB\xA1\xFA \xD1\xA1\xD7\xD6  EXE \xC9\xCF\xC6\xC1", 0);
 	} else {
 		box_lab[0] = "\xBB\xBB\xD2\xB3";
 		box_lab[5] = "\xCD\xEA\xB3\xC9";
@@ -5157,6 +5155,12 @@ static void handle_set_key(key_event_t ev)
 {
 	/* a save report lives for exactly one key press (buglist2 item 22) */
 	status_msg[0] = 0;
+	if (ev.key == KEY_EXIT && cfg_dirty &&
+	    (mode == MODE_SET || mode == MODE_SET_INV || mode == MODE_SET_UNIT)) {
+		confirm_kind = 3;
+		mode = MODE_CONFIRM;
+		return;
+	}
 	if (ev.key == KEY_EXIT) {
 		/* buglist2 21: one level per page, never a shortcut to the top */
 		if (mode == MODE_SET_CHARS || mode == MODE_SET_PHR)
@@ -6208,7 +6212,6 @@ static void handle_kb_key(key_event_t ev)
 			}
 			return;
 		}
-		snprintf(status_msg, sizeof status_msg, "l%d n%d c%d", py_len, py_candidates(), py_candidate_cells(py_pick, nb));
 		if (pinyin && py_len > 0 && py_candidates() > 0) {
 			int cl = py_candidate_cells(py_pick, nb);
 			if (cl <= 0) {
@@ -6227,13 +6230,7 @@ static void handle_kb_key(key_event_t ev)
 				return;
 			}
 		}
-		if (pinyin) {
-			if (ch && py_len < 7) {
-				py_buf[py_len++] = ch;
-				py_buf[py_len] = 0;
-				py_refresh();
-			}
-		} else if (ch) {
+		if (!pinyin && ch) {
 			kb_type(ch);
 			if (kb_target == 0 || kb_target == 2)
 				kb_back();
@@ -6321,6 +6318,17 @@ static void draw_confirm(void)
 		dupdate();
 		return;
 	}
+	if (confirm_kind == 3) {
+		ui_no_cups = 0;
+		box_lab[0] = "\xBC\xCC\xD0\xF8";
+		box_lab[1] = "\xB4\xE6\xCD\xCB";
+		box_lab[5] = "\xB7\xC5\xC6\xFA";
+		ui_title("\xC9\xE8\xD6\xC3\xCE\xB4\xB1\xA3\xB4\xE6");
+		draw_ui(2, CONTENT_Y + 4, "\xB1\xA3\xB4\xE6\xBA\xF3\xD4\xD9\xC0\xEB\xBF\xAA\xA3\xBF", 0);
+		ui_status("");
+		dupdate();
+		return;
+	}
 	if (confirm_kind == 1) {
 		ui_no_cups = 0;
 		box_lab[0] = "\xBC\xCC\xD0\xF8";	/* 继续 */
@@ -6357,6 +6365,28 @@ static void handle_confirm_key(key_event_t ev)
 			mode = MODE_BOOK;
 		} else if (ev.key == KEY_EXIT) {
 			mode = MODE_BOOK;
+		}
+		return;
+	}
+	if (confirm_kind == 3) {
+		if (ev.key == KEY_F1 || ev.key == KEY_EXE) {
+			mode = MODE_SET;
+			return;
+		}
+		if (ev.key == KEY_F2) {
+			if (cfg_save() == 0) {
+				cfg_load();
+				cfg_dirty = 0;
+			}
+			mode = MODE_SET;
+			return;
+		}
+		if (ev.key == KEY_F6 || ev.key == KEY_EXIT) {
+			cfg_load();
+			ui_inv = set_inv;
+			cfg_dirty = 0;
+			mode = MODE_SET;
+			return;
 		}
 		return;
 	}
