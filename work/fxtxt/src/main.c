@@ -6072,9 +6072,11 @@ static void handle_kb_key(key_event_t ev)
 		             ev.key == KEY_LEFT || ev.key == KEY_RIGHT ||
 		             ev.key == KEY_DEL || ev.key == KEY_ACON;
 		char c = ui_key ? 0 : ev_letter(ev);
+		/* on the pinyin page the printed letter wins over the digit or
+		   symbol that shares the key, so a..z are all reachable */
+		if (!c && !ui_key && pinyin)
+			c = alpha_letter(ev.key);
 		if (!c && !ui_key) {
-			/* a plain key types the character printed on it, exactly like
-			   the editor does: no F6, no ALPHA needed for letters */
 			char k = key_ascii(ev.key);
 			if (k >= ' ' && k < 127)
 				c = k;
