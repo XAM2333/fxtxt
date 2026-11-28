@@ -3088,14 +3088,14 @@ enum {
 	A_EDIT, A_FIND, A_BOOK, A_HELP,			/* reading page */
 	A_HIT_PREV, A_HIT_NEXT, A_HIT_QUERY, A_HIT_CLOSE,	/* result list */
 	A_SAVE, A_LEAVE, A_CAPS, A_PUNCT, A_CN, A_PAGE, A_UNDO, A_GOTO,
-	A_SET, A_REDO
+	A_SET, A_REDO, A_MARK, A_PASTE
 };
 
 static unsigned char const fk_act[FS_N][6] = {
 	{ A_EDIT,     A_FIND,     A_NONE,      A_GOTO,  A_BOOK,      A_SET },
 	{ A_HIT_PREV, A_HIT_NEXT, A_HIT_QUERY, A_NONE,  A_HIT_CLOSE, A_HELP },
 	{ A_SAVE,     A_LEAVE,    A_CAPS,      A_PUNCT, A_CN,        A_PAGE },
-	{ A_UNDO,     A_REDO,     A_NONE,      A_NONE,  A_HELP,      A_PAGE },
+	{ A_UNDO,     A_REDO,     A_MARK,      A_PASTE, A_HELP,      A_PAGE },
 	{ A_SET,      A_FIND,     A_GOTO,      A_NONE,  A_NONE,      A_PAGE },
 };
 
@@ -3103,7 +3103,7 @@ static char const *fk_lab[FS_N][6] = {
 	{ "\xB1\xE0\xBC\xAD", "\xB2\xE9\xD5\xD2", 0, "\xCC\xF8\xD7\xAA", "\xCA\xE9\xC7\xA9", "\xC9\xE8\xD6\xC3" },
 	{ "\xC9\xCF\xCC\xF5", "\xCF\xC2\xCC\xF5", "\xD4\xD9\xB2\xE9", 0, "\xCD\xCB\xB3\xF6", "\xB0\xEF\xD6\xFA" },
 	{ "\xB1\xA3\xB4\xE6", "\xCD\xCB\xB3\xF6", "\xB4\xF3\xD0\xB4", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB7\xAD\xD2\xB3" },
-	{ "\xB3\xB7\xCF\xFA", "\xD6\xD8\xD7\xF6", 0, 0, "\xB0\xEF\xD6\xFA", "\xB7\xAD\xD2\xB3" },
+	{ "\xB3\xB7\xCF\xFA", "\xD6\xD8\xD7\xF6", "\xBF\xF2\xD1\xA1", "\xD5\xB3\xCC\xF9", "\xB0\xEF\xD6\xFA", "\xB7\xAD\xD2\xB3" },
 	{ "\xC9\xE8\xD6\xC3", "\xB2\xE9\xD5\xD2", "\xCC\xF8\xD7\xAA", 0, 0, "\xB7\xAD\xD2\xB3" },
 };
 
@@ -3948,6 +3948,67 @@ static char kb_char(int row, int col)
 	int n = (int)strlen(p);
 	int i = row * 6 + col;
 	return (i >= 0 && i < n) ? p[i] : 0;
+}
+
+/*=== selection ============================================================
+
+   SHIFT+8 marks a start cell, SHIFT+9 copies the range from that mark to the
+   caret and puts it in at the caret (a duplicate). The editor's second page
+   carries the same pair on F3/F4. */
+
+#define SEL_MAX 96
+
+static int sel_anchor = -1;	/* -1: nothing marked */
+static uint16_t sel_buf[SEL_MAX];
+
+static void set_saved(int rc);
+
+static void sel_mark(void)
+{
+	sel_anchor = line_start(cur_line) + cur_col;
+	set_saved(0);
+	snprintf(status_msg, sizeof status_msg, "%s%d", "\xD2\xD1\xB1\xEA\xBC\xC7 ", sel_anchor);
+}
+
+static void sel_paste(void)
+{
+	int a = sel_anchor;
+	int c = line_start(cur_line) + cur_col;
+	int n;
+
+	if (a < 0) {
+		snprintf(status_msg, sizeof status_msg, "\xCF\xC8\xBF\xF2\xD1\xA1");
+		return;
+	}
+	if (a > c) {
+		int t = a;
+		a = c;
+		c = t;
+	}
+	n = c - a;
+	if (n <= 0) {
+		sel_anchor = -1;
+		return;
+	}
+	if (n > SEL_MAX)
+		n = SEL_MAX;
+	for (int i = 0; i < n; i++)
+		sel_buf[i] = cells[a + i];
+	for (int i = n - 1; i >= 0; i--) {
+		/* insert back to front so the offsets stay valid */
+		if (c + i < text_max && ncell < text_max) {
+			memmove(cells + c + i + 1, cells + c + i,
+			        sizeof(uint16_t) * (size_t)(ncell - (c + i)));
+			cells[c + i] = sel_buf[i];
+			ncell++;
+		}
+	}
+	undo_clear();
+	sel_anchor = -1;
+	dirty = 1;
+	cur_line = offset_to_line(c + n);
+	cur_col = (c + n) - line_start(cur_line);
+	set_saved(0);
 }
 
 /*=== undo =================================================================*/
@@ -5793,6 +5854,12 @@ static void handle_view_key(key_event_t ev)
 		case A_REDO:
 			redo_apply();
 			return;
+		case A_MARK:
+			sel_mark();
+			return;
+		case A_PASTE:
+			sel_paste();
+			return;
 		case A_UNDO:
 			undo_apply();
 			return;
@@ -5823,6 +5890,8 @@ static void handle_view_key(key_event_t ev)
 		}
 		if (!c && !ev.alpha && ev.shift) {
 			switch (ev.key) {
+			case KEY_8: sel_mark(); return;
+			case KEY_9: sel_paste(); return;
 			case KEY_MUL: c = '{'; break;
 			case KEY_DIV: c = '}'; break;
 			case KEY_ADD: c = '['; break;
@@ -6109,6 +6178,7 @@ static void fs_delete_selected(void);
 static void fs_delete_pos_for(char const *name)
 {
 	char pn[NAME_MAX_L + 6];
+	char full[NAME_MAX_L + 40];
 	size_t n = strlen(name);
 	char *dot;
 
@@ -6123,7 +6193,6 @@ static void fs_delete_pos_for(char const *name)
 		strcpy(pn + n, ".POS");
 	fs_delete_path(pn);
 	if (strcmp(cur_dir, "\\\\fls0") != 0) {
-		char full[NAME_MAX_L + 40];
 		snprintf(full, sizeof full, "%s\\%s", cur_dir, pn);
 		fs_delete_path(full);
 	}
