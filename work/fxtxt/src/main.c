@@ -4350,13 +4350,12 @@ static void draw_keyboard(void)
 
 		/* the glyph the pick stands on, so the user sees what will be
 		   stored; it disappears when the page is left (py_reset) */
-		if (py_len && py_candidates() > 0) {
-			uint16_t pv[SET_PHR_LEN];
-			int pl = py_candidate_cells(py_pick, pv);
+		/* what has already been put into the word, not the live pick */
+		{
 			int px = 2;
-			for (int k = 0; k < pl; k++) {
-				draw_cell(px, CONTENT_Y + 1, pv[k], 0);
-				px += cell_adv(pv[k]);
+			for (int k = 0; k < phr_buf_n; k++) {
+				draw_cell(px, CONTENT_Y + 1, phr_buf[k], 0);
+				px += cell_adv(phr_buf[k]);
 			}
 		}
 		/* one candidate line that scrolls with the pick */
