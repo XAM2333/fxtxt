@@ -4314,8 +4314,17 @@ static void draw_keyboard(void)
 		box_lab[5] = "\xCD\xEA\xB3\xC9";	/* 完成 */
 	} else if (pinyin) {
 		ui_no_cups = 1;
-		draw_ui(2, STATUS_Y,
-		        "\xA1\xFB\xA1\xFA \xD1\xA1\xD7\xD6  EXE \xC9\xCF\xC6\xC1", 0);
+		if (kb_target == 2 || kb_target == 3) {
+			/* the same two keys as the list page it came from */
+			for (int i = 0; i < 6; i++)
+				box_lab[i] = NULL;
+			box_lab[0] = "\xB1\xA3\xB4\xE6";	/* 保存 */
+			box_lab[5] = "\xCD\xCB\xB3\xF6";	/* 退出 */
+			ui_no_cups = 0;
+		} else {
+			draw_ui(2, STATUS_Y - 9,
+			        "\xA1\xFB\xA1\xFA \xD1\xA1\xD7\xD6  EXE \xC9\xCF\xC6\xC1", 0);
+		}
 	} else {
 		box_lab[0] = "\xBB\xBB\xD2\xB3";
 		box_lab[5] = "\xCD\xEA\xB3\xC9";
@@ -6052,6 +6061,18 @@ static void handle_view_key(key_event_t ev)
 static void handle_kb_key(key_event_t ev)
 {
 	uint16_t nb[SET_PHR_LEN];
+	if (kb_target == 2 || kb_target == 3) {
+		if (ev.key == KEY_F1) {
+			set_phrase_commit();
+			ime_flush();
+			return;
+		}
+		if (ev.key == KEY_F6) {
+			set_phrase_commit();
+			kb_back();
+			return;
+		}
+	}
 	char ch = kb_char(kb_row, kb_col);
 	int pinyin = (kb_page == PAGE_PINYIN);
 	int punct = (kb_page == PAGE_PUNCT);
