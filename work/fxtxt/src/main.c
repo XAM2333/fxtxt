@@ -3420,7 +3420,7 @@ static int py_match(void)
    built once per keystroke into py_ent[][] and everything (drawing, picking,
    inserting) walks that array instead of py_glyph directly. */
 
-#define PY_ENT_MAX 32		/* what the row can show anyway */
+#define PY_ENT_MAX 36		/* what the row can show anyway */
 #define PY_ENT_PHRASE 0x8000u
 static uint16_t py_src[PY_ENT_MAX];	/* cell, or PY_ENT_PHRASE | phrase index */
 static int py_ent_count;
