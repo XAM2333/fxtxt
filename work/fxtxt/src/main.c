@@ -4322,6 +4322,7 @@ static void draw_keyboard(void)
 	}
 	if (kb_target == 2 || kb_target == 3) {
 		ui_title(kb_target == 2 ? "\xCC\xED\xBC\xD3\xD7\xD6\xB4\xCA" : "\xCC\xED\xBC\xD3\xD7\xD6\xB4\xCA");
+		ui_hints("", status_msg, 0);
 	} else {
 		ui_title(punct ? "\xB1\xEA\xB5\xE3\xB7\xFB\xBA\xC5"
 		               : pinyin ? (kb_target == 1 ? "\xC6\xB4\xD2\xF4\xCB\xD1\xCB\xF7" : "\xC6\xB4\xD2\xF4\xCA\xE4\xC8\xEB")
@@ -6038,7 +6039,7 @@ static void handle_kb_key(key_event_t ev)
 		             ev.key == KEY_LEFT || ev.key == KEY_RIGHT ||
 		             ev.key == KEY_DEL || ev.key == KEY_ACON;
 		char c = ui_key ? 0 : ev_letter(ev);
-		if (!c && !ui_key && !ev.alpha && !ev.shift && pinyin)
+		if (!c && !ui_key && !ev.shift && pinyin)
 			c = alpha_letter(ev.key);
 		if (c) {
 			if (pinyin) {
@@ -6125,15 +6126,20 @@ static void handle_kb_key(key_event_t ev)
 	case KEY_F5:
 		if (pinyin) {
 			if (py_candidates() > 0) {
-				{
-					uint16_t cc[SET_PHR_LEN];
-					int cl = py_candidate_cells(py_pick, cc);
-					for (int k = 0; k < cl; k++)
-						kb_put(cc[k]);
+				uint16_t cc[SET_PHR_LEN];
+				int cl = py_candidate_cells(py_pick, cc);
+				if (cl <= 0) {
+					int one = py_candidate(py_pick);
+					if (one) {
+						cc[0] = (uint16_t)one;
+						cl = 1;
+					}
 				}
+				for (int k = 0; k < cl; k++)
+					kb_put(cc[k]);
 				py_reset();
-				if (kb_target == 2)	/* back to the list, one cell added */
-					kb_back();
+				if (kb_target == 0 || kb_target == 2)
+					kb_back();	/* back to the list, one cell added */
 			}
 		}
 		return;
@@ -6159,10 +6165,16 @@ static void handle_kb_key(key_event_t ev)
 			}
 			return;
 		}
-		if (pinyin && py_len > 0) {
-			int n = py_candidates();
-			if (n > 0 && py_candidate_cells(py_pick, nb) > 0) {
-				int cl = py_candidate_cells(py_pick, nb);
+		if (pinyin && py_len > 0 && py_candidates() > 0) {
+			int cl = py_candidate_cells(py_pick, nb);
+			if (cl <= 0) {
+				int one = py_candidate(py_pick);
+				if (one) {
+					nb[0] = (uint16_t)one;
+					cl = 1;
+				}
+			}
+			if (cl > 0) {
 				for (int i = 0; i < cl; i++)
 					kb_put(nb[i]);
 				py_reset();
