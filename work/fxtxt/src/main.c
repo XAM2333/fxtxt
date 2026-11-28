@@ -3167,6 +3167,11 @@ static int page_total(void)
 	return (rr + rows() - 1) / rows();
 }
 
+#define SEL_MAX 96
+
+static int sel_anchor = -1;	/* -1: nothing marked */
+static uint16_t sel_buf[SEL_MAX];
+
 static void draw_view(void)
 {
 	ui_no_cups = 0;
@@ -3252,6 +3257,11 @@ static void draw_view(void)
 			if (edit_mode && c == ccell)
 				caretx = x;
 			int inv = (hl >= 0 && c >= hl && c < hl + search_len);
+			if (sel_anchor >= 0) {
+				int a = sel_anchor, b = line_start(cur_line) + cur_col;
+				if (a > b) { int s = a; a = b; b = s; }
+				if (c >= a && c < b) inv = 1;
+			}
 			draw_cell(x, y, cells[c], inv);
 			x += cell_adv(cells[c]);
 		}
@@ -3956,10 +3966,6 @@ static char kb_char(int row, int col)
    caret and puts it in at the caret (a duplicate). The editor's second page
    carries the same pair on F3/F4. */
 
-#define SEL_MAX 96
-
-static int sel_anchor = -1;	/* -1: nothing marked */
-static uint16_t sel_buf[SEL_MAX];
 
 static void set_saved(int rc);
 
