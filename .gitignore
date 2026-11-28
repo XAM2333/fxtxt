@@ -53,3 +53,10 @@ out/fonts/FONT12.dlf
 PROB.g1a
 work/probe/
 tools/_probe*.py
+
+# ---- third-party reference binaries and session dumps ----
+GEOMETRY.g1a
+PHYSIUM.g1a
+PythonEx.g1a
+dsh-session-*.zip
+out/shots/
