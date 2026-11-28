@@ -4339,27 +4339,27 @@ static void draw_keyboard(void)
 			snprintf(line, sizeof line, "\xCA\xE4\xC8\xEB\xC6\xB4\xD2\xF4");
 		draw_ui(2, CONTENT_Y + 1, line, 0);
 
-		/* candidate row: every candidate, wrapped over up to two lines
-		   so the whole list is visible at once instead of scrolling */
+		/* one candidate line that scrolls with the pick */
 		int ncand = py_candidates();
 		int y = CONTENT_Y + 11;
+		int start = 0;
+		while (start < py_pick) {
+			int w = 0;
+			for (int i = start; i <= py_pick; i++)
+				w += py_candidate_w(i) + 2;
+			if (w <= 124)
+				break;
+			start++;
+		}
 		int x = 2;
-		int rows = 0;
-		/* the window follows the pick, like the editor's candidate row */
-		int start = py_pick > 19 ? py_pick - 19 : 0;
-		for (int i = start; i < ncand && rows < 2; i++) {
+		for (int i = start; i < ncand; i++) {
 			uint16_t cc[SET_PHR_LEN];
 			int cl = py_candidate_cells(i, cc);
 			int cw = py_candidate_w(i);
 			if (cl <= 0)
 				continue;
-			if (x + cw > 126) {
-				if (rows == 2)
-					break;
-				rows++;
-				x = 2;
-				y += 10;
-			}
+			if (x + cw > 126)
+				break;
 			if (i == py_pick)
 				drect(x - 1, y - 1, x + cw, y + 9, INKBAR);
 			for (int k = 0; k < cl; k++) {
