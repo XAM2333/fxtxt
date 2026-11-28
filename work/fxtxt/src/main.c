@@ -4318,7 +4318,7 @@ static void draw_keyboard(void)
 			/* the same two keys as the list page it came from */
 			for (int i = 0; i < 6; i++)
 				box_lab[i] = NULL;
-			box_lab[0] = "\xB1\xA3\xB4\xE6";	/* 保存 */
+			box_lab[0] = "\xB4\xE6\xB4\xA2";	/* 存储 */
 			box_lab[5] = "\xCD\xCB\xB3\xF6";	/* 退出 */
 			ui_no_cups = 0;
 		} else {
@@ -4348,9 +4348,20 @@ static void draw_keyboard(void)
 			snprintf(line, sizeof line, "\xCA\xE4\xC8\xEB\xC6\xB4\xD2\xF4");
 		draw_ui(2, CONTENT_Y + 1, line, 0);
 
+		/* the glyph the pick stands on, so the user sees what will be
+		   stored; it disappears when the page is left (py_reset) */
+		if (py_len && py_candidates() > 0) {
+			uint16_t pv[SET_PHR_LEN];
+			int pl = py_candidate_cells(py_pick, pv);
+			int px = 2;
+			for (int k = 0; k < pl; k++) {
+				draw_cell(px, CONTENT_Y + 11, pv[k], 0);
+				px += cell_adv(pv[k]);
+			}
+		}
 		/* one candidate line that scrolls with the pick */
 		int ncand = py_candidates();
-		int y = CONTENT_Y + 11;
+		int y = CONTENT_Y + 21;
 		int start = 0;
 		while (start < py_pick) {
 			int w = 0;
@@ -6065,6 +6076,7 @@ static void handle_kb_key(key_event_t ev)
 		if (ev.key == KEY_F1) {
 			set_phrase_commit();
 			ime_flush();
+			kb_back();
 			return;
 		}
 		if (ev.key == KEY_F6) {
