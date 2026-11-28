@@ -4345,7 +4345,9 @@ static void draw_keyboard(void)
 		int y = CONTENT_Y + 11;
 		int x = 2;
 		int rows = 0;
-		for (int i = 0; i < ncand && rows < 2; i++) {
+		/* the window follows the pick, like the editor's candidate row */
+		int start = py_pick > 19 ? py_pick - 19 : 0;
+		for (int i = start; i < ncand && rows < 2; i++) {
 			uint16_t cc[SET_PHR_LEN];
 			int cl = py_candidate_cells(i, cc);
 			int cw = py_candidate_w(i);
