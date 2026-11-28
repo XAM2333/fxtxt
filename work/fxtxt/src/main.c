@@ -6188,6 +6188,8 @@ static void handle_kb_key(key_event_t ev)
 		if (pinyin && py_len > 0) {
 			py_buf[--py_len] = 0;
 			py_refresh();
+		} else if (pinyin && phr_buf_n > 0) {
+			phr_buf_n--;		/* take back the last character */
 		} else {
 			kb_backspace();
 		}
