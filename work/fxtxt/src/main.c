@@ -5050,9 +5050,11 @@ static void draw_set_ime(void)
 	ui_info_right = 0;
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = NULL;
-	box_lab[0] = "\xCC\xED\xBC\xD3";	/* 添加 */
-	box_lab[1] = "\xC9\xBE\xB3\xFD";	/* 删除 */
-	box_lab[2] = "\xC7\xB0\xD2\xC6";	/* 前移 */
+	box_lab[0] = "\xB1\xA3\xB4\xE6";	/* 保存 */
+	box_lab[1] = "\xCC\xED\xBC\xD3";	/* 添加 */
+	box_lab[2] = "\xC9\xBE\xB3\xFD";	/* 删除 */
+	box_lab[3] = "\xC7\xB0\xD2\xC6";	/* 前移 */
+	box_lab[5] = "\xCD\xCB\xB3\xF6";	/* 退出 */
 	box_lab[5] = "\xB0\xEF\xD6\xFA";	/* 助 */
 	ui_title_state("\xD7\xD6\xB4\xCA", 1);
 	if (total == 0) {
@@ -5255,19 +5257,18 @@ static void handle_set_key(key_event_t ev)
 		} else if (ev.key == KEY_DOWN) {
 			if (set_sel < total - 1)
 				set_sel++;
-		} else if (ev.key == KEY_EXE && total > 0) {
-			if (set_sel < set_char_n) {
-				uint16_t one[1];
-				one[0] = set_chars[set_sel];
-				set_insert(one, 1);
-			} else {
-				set_insert(set_phrs[set_sel - set_char_n],
-				           set_phr_len[set_sel - set_char_n]);
-			}
 		} else if (ev.key == KEY_F1) {
+			/* writing the list is an explicit act: repeated BFile
+			   rewrites are what rebooted the unit */
+			ime_dirty = 1;
+			ime_flush();
+		} else if (ev.key == KEY_F6) {
+			mode = MODE_SET;
+		} else if (ev.key == KEY_F2) {
 			phr_buf_n = 0;
 			open_keyboard(3, PAGE_PINYIN);
-		} else if (ev.key == KEY_F2 && total > 0) {
+			open_keyboard(3, PAGE_PINYIN);
+		} else if (ev.key == KEY_F3 && total > 0) {
 			if (set_sel < set_char_n) {
 				for (int i = set_sel; i < set_char_n - 1; i++)
 					set_chars[i] = set_chars[i + 1];
@@ -5284,7 +5285,7 @@ static void handle_set_key(key_event_t ev)
 				set_sel--;
 			py_cache_lists();
 			ime_dirty = 1;
-		} else if (ev.key == KEY_F3 && total > 0) {
+		} else if (ev.key == KEY_F4 && total > 0) {
 			if (set_sel < set_char_n && set_sel > 0) {
 				uint16_t c = set_chars[set_sel];
 				for (int i = set_sel; i > 0; i--)
