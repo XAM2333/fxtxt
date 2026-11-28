@@ -5967,6 +5967,12 @@ static void handle_view_key(key_event_t ev)
 			py_reset();
 			return;
 		}
+		if (!edit_mode && search_n > 0) {
+			/* the result list sits one level below the find page, so
+			   EXIT walks back there instead of jumping to the list */
+			mode = MODE_SEARCH;
+			return;
+		}
 		/* SHIFT+EXIT, or the reader itself: back to the list */
 		edit_mode = 0;
 		fbar_page = 0;
