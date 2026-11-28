@@ -3081,34 +3081,38 @@ static void draw_list(void)
    functions.  Here the label and the action of a key are the same row entry,
    so they cannot disagree any more. */
 
-enum { FS_READ = 0, FS_HIT, FS_EDIT1, FS_EDIT2, FS_N };
+enum { FS_READ = 0, FS_HIT, FS_EDIT1, FS_EDIT2, FS_EDIT3, FS_N };
 
 enum {
 	A_NONE = 0,
 	A_EDIT, A_FIND, A_BOOK, A_HELP,			/* reading page */
 	A_HIT_PREV, A_HIT_NEXT, A_HIT_QUERY, A_HIT_CLOSE,	/* result list */
 	A_SAVE, A_LEAVE, A_CAPS, A_PUNCT, A_CN, A_PAGE, A_UNDO, A_GOTO,
-	A_SET
+	A_SET, A_REDO
 };
 
 static unsigned char const fk_act[FS_N][6] = {
 	{ A_EDIT,     A_FIND,     A_NONE,      A_GOTO,  A_BOOK,      A_SET },
 	{ A_HIT_PREV, A_HIT_NEXT, A_HIT_QUERY, A_NONE,  A_HIT_CLOSE, A_HELP },
 	{ A_SAVE,     A_LEAVE,    A_CAPS,      A_PUNCT, A_CN,        A_PAGE },
-	{ A_UNDO,     A_FIND,     A_GOTO,      A_NONE,  A_SET,       A_PAGE },
+	{ A_UNDO,     A_REDO,     A_NONE,      A_NONE,  A_HELP,      A_PAGE },
+	{ A_SET,      A_FIND,     A_GOTO,      A_NONE,  A_NONE,      A_PAGE },
 };
 
 static char const *fk_lab[FS_N][6] = {
 	{ "\xB1\xE0\xBC\xAD", "\xB2\xE9\xD5\xD2", 0, "\xCC\xF8\xD7\xAA", "\xCA\xE9\xC7\xA9", "\xC9\xE8\xD6\xC3" },
 	{ "\xC9\xCF\xCC\xF5", "\xCF\xC2\xCC\xF5", "\xD4\xD9\xB2\xE9", 0, "\xCD\xCB\xB3\xF6", "\xB0\xEF\xD6\xFA" },
 	{ "\xB1\xA3\xB4\xE6", "\xCD\xCB\xB3\xF6", "\xB4\xF3\xD0\xB4", "\xB1\xEA\xB5\xE3", "\xD6\xD0\xD3\xA2", "\xB7\xAD\xD2\xB3" },
-	{ "\xB3\xB7\xCF\xFA", "\xB2\xE9\xD5\xD2", "\xCC\xF8\xD7\xAA", 0, "\xC9\xE8\xD6\xC3", "\xB7\xAD\xD2\xB3" },
+	{ "\xB3\xB7\xCF\xFA", "\xD6\xD8\xD7\xF6", 0, 0, "\xB0\xEF\xD6\xFA", "\xB7\xAD\xD2\xB3" },
+	{ "\xC9\xE8\xD6\xC3", "\xB2\xE9\xD5\xD2", "\xCC\xF8\xD7\xAA", 0, 0, "\xB7\xAD\xD2\xB3" },
 };
 
 static int fk_state(void)
 {
 	if (!edit_mode)
 		return search_n > 0 ? FS_HIT : FS_READ;
+	if (fbar_page == 2)
+		return FS_EDIT3;
 	return fbar_page ? FS_EDIT2 : FS_EDIT1;
 }
 
@@ -3948,7 +3952,7 @@ static char kb_char(int row, int col)
 
 /*=== undo =================================================================*/
 
-#define UNDO_MAX 64
+#define UNDO_MAX 32
 
 typedef struct {
 	unsigned char kind;	/* 0: the edit added this cell, 1: it removed it */
@@ -3958,9 +3962,13 @@ typedef struct {
 
 static undo_rec_t undo_buf[UNDO_MAX];
 static int undo_n;
+#define REDO_MAX 12
+static undo_rec_t redo_buf[REDO_MAX];
+static int redo_n;
 
 static void undo_push(int kind, int pos, uint16_t cell)
 {
+	redo_n = 0;
 	if (undo_n == UNDO_MAX) {
 		memmove(undo_buf, undo_buf + 1,
 		        sizeof undo_buf[0] * (UNDO_MAX - 1));
@@ -3978,6 +3986,8 @@ static void undo_apply(void)
 		return;
 	undo_rec_t r = undo_buf[--undo_n];
 
+	if (redo_n < REDO_MAX)
+		redo_buf[redo_n++] = r;
 	if (r.kind == 0) {
 		/* take the cell we added out again */
 		if (r.pos >= 0 && r.pos < ncell) {
@@ -4008,6 +4018,44 @@ static void undo_apply(void)
 static void undo_clear(void)
 {
 	undo_n = 0;
+	redo_n = 0;
+}
+
+/* Put the last undone edit back: the same cell, the same place. */
+static void redo_apply(void)
+{
+	if (redo_n <= 0)
+		return;
+	undo_rec_t r = redo_buf[--redo_n];
+
+	if (r.kind == 0) {
+		/* the edit had added this cell */
+		if (ncell < text_max && r.pos >= 0 && r.pos <= ncell) {
+			memmove(cells + r.pos + 1, cells + r.pos,
+			        sizeof(uint16_t) * (size_t)(ncell - r.pos));
+			cells[r.pos] = r.cell;
+			ncell++;
+		}
+	} else {
+		/* the edit had removed it */
+		if (r.pos >= 0 && r.pos < ncell) {
+			memmove(cells + r.pos, cells + r.pos + 1,
+			        sizeof(uint16_t) * (size_t)(ncell - r.pos - 1));
+			ncell--;
+		}
+	}
+	if (undo_n < UNDO_MAX)
+		undo_buf[undo_n++] = r;
+	{
+		int pos = r.pos;
+		if (pos > ncell)
+			pos = ncell;
+		if (pos < 0)
+			pos = 0;
+		cur_line = offset_to_line(pos);
+		cur_col = pos - line_start(cur_line);
+		dirty = 1;
+	}
 }
 
 static void text_insert(uint16_t cell)
@@ -5740,7 +5788,10 @@ static void handle_view_key(key_event_t ev)
 			py_reset();
 			return;
 		case A_PAGE:
-			fbar_page = fbar_page ? 0 : 1;
+			fbar_page = fbar_page >= 2 ? 0 : fbar_page + 1;
+			return;
+		case A_REDO:
+			redo_apply();
 			return;
 		case A_UNDO:
 			undo_apply();
