@@ -183,7 +183,8 @@ static int cur_line, cur_col;
 static int mode = MODE_LIST;
 static int kb_page = PAGE_LOWER;
 static int kb_row, kb_col;
-static int kb_target;			/* 0 = doc, 1 = search prompt, 2 = 常用字, 3 = 常用词 */
+static int kb_target;
+static int kb_num;			/* 0 = doc, 1 = search prompt, 2 = 常用字, 3 = 常用词 */
 
 /* the user's own IME lists, edited in the settings pages */
 #define SET_CHAR_MAX 24
@@ -6022,6 +6023,15 @@ static void handle_kb_key(key_event_t ev)
 	/* Letters: ALPHA+key everywhere, and a bare key on the pinyin page.
 	   Function/arrow/DEL keys are always handled as themselves. */
 	{
+		if (punct) {
+			char d = key_ascii(ev.key);
+			if (d >= '0' && d <= '9') {
+				kb_num = kb_num * 10 + (d - '0');
+				if (kb_num > 99)
+					kb_num = 99;
+				return;
+			}
+		}
 		int ui_key = (ev.key >= KEY_F1 && ev.key <= KEY_F6) ||
 		             ev.key == KEY_EXE || ev.key == KEY_EXIT ||
 		             ev.key == KEY_UP || ev.key == KEY_DOWN ||
@@ -6128,6 +6138,17 @@ static void handle_kb_key(key_event_t ev)
 		}
 		return;
 	case KEY_EXE:
+		if (punct && kb_num > 0) {
+			int pick = kb_num - 1;
+			uint16_t pc = punct_cell(pick);
+			kb_num = 0;
+			if (pc) {
+				kb_put(pc);
+				if (kb_target == 0 || kb_target == 2)
+					kb_back();
+			}
+			return;
+		}
 		if (punct) {
 			int pick = punct_live_at(punct_pos());
 			uint16_t pc = pick >= 0 ? punct_cell(pick) : 0;
