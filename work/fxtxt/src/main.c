@@ -4302,6 +4302,7 @@ static void kb_backspace(void)
 
 static void draw_keyboard(void)
 {
+
 	ui_no_cups = 0;
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = 0;
@@ -4857,6 +4858,24 @@ static void set_defaults(void)
 /* finish the phrase being composed: append it to the list */
 static void set_phrase_commit(void)
 {
+	if (phr_buf_n == 1) {
+		uint16_t one = phr_buf[0];
+		int have = 0;
+		for (int i = 0; i < set_char_n; i++)
+			if (set_chars[i] == one) {
+				have = 1;
+				set_sel = i;
+			}
+		if (!have && set_char_n < SET_CHAR_MAX) {
+			set_chars[set_char_n] = one;
+			set_sel = set_char_n;
+			set_char_n++;
+			py_cache_lists();
+			ime_dirty = 1;
+		}
+		phr_buf_n = 0;
+		return;
+	}
 	for (int i = 0; i < set_phr_n && phr_buf_n > 0; i++) {
 		if (set_phr_len[i] == phr_buf_n
 		    && !memcmp(set_phrs[i], phr_buf, phr_buf_n * sizeof(uint16_t))) {
@@ -5029,10 +5048,9 @@ static void draw_set_ime(void)
 	ui_info_right = 0;
 	for (int i = 0; i < 6; i++)
 		box_lab[i] = NULL;
-	box_lab[0] = "\xBC\xD3\xD7\xD6";	/* 增 */
-	box_lab[1] = "\xBC\xD3\xB4\xCA";	/* 词 */
-	box_lab[2] = "\xC9\xBE\xB3\xFD";	/* 删 */
-	box_lab[3] = "\xC7\xB0\xD2\xC6";	/* 移 */
+	box_lab[0] = "\xCC\xED\xBC\xD3";	/* 添加 */
+	box_lab[1] = "\xC9\xBE\xB3\xFD";	/* 删除 */
+	box_lab[2] = "\xC7\xB0\xD2\xC6";	/* 前移 */
 	box_lab[5] = "\xB0\xEF\xD6\xFA";	/* 助 */
 	ui_title_state("\xD7\xD6\xB4\xCA", 1);
 	if (total == 0) {
@@ -5234,11 +5252,9 @@ static void handle_set_key(key_event_t ev)
 				           set_phr_len[set_sel - set_char_n]);
 			}
 		} else if (ev.key == KEY_F1) {
-			open_keyboard(2, PAGE_PINYIN);
-		} else if (ev.key == KEY_F2) {
 			phr_buf_n = 0;
 			open_keyboard(3, PAGE_PINYIN);
-		} else if (ev.key == KEY_F3 && total > 0) {
+		} else if (ev.key == KEY_F2 && total > 0) {
 			if (set_sel < set_char_n) {
 				for (int i = set_sel; i < set_char_n - 1; i++)
 					set_chars[i] = set_chars[i + 1];
@@ -5255,7 +5271,7 @@ static void handle_set_key(key_event_t ev)
 				set_sel--;
 			py_cache_lists();
 			ime_dirty = 1;
-		} else if (ev.key == KEY_F4 && total > 0) {
+		} else if (ev.key == KEY_F3 && total > 0) {
 			if (set_sel < set_char_n && set_sel > 0) {
 				uint16_t c = set_chars[set_sel];
 				for (int i = set_sel; i > 0; i--)
@@ -6165,6 +6181,7 @@ static void handle_kb_key(key_event_t ev)
 			}
 			return;
 		}
+		snprintf(status_msg, sizeof status_msg, "l%d n%d c%d", py_len, py_candidates(), py_candidate_cells(py_pick, nb));
 		if (pinyin && py_len > 0 && py_candidates() > 0) {
 			int cl = py_candidate_cells(py_pick, nb);
 			if (cl <= 0) {
