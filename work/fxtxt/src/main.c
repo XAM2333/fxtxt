@@ -4346,7 +4346,7 @@ static void draw_keyboard(void)
 			snprintf(line, sizeof line, "%s_", py_buf);
 		else
 			snprintf(line, sizeof line, "\xCA\xE4\xC8\xEB\xC6\xB4\xD2\xF4");
-		draw_ui(2, CONTENT_Y + 1, line, 0);
+		draw_ui(2, CONTENT_Y + 11, line, 0);
 
 		/* the glyph the pick stands on, so the user sees what will be
 		   stored; it disappears when the page is left (py_reset) */
@@ -4355,7 +4355,7 @@ static void draw_keyboard(void)
 			int pl = py_candidate_cells(py_pick, pv);
 			int px = 2;
 			for (int k = 0; k < pl; k++) {
-				draw_cell(px, CONTENT_Y + 11, pv[k], 0);
+				draw_cell(px, CONTENT_Y + 1, pv[k], 0);
 				px += cell_adv(pv[k]);
 			}
 		}
