@@ -4222,34 +4222,36 @@ static void draw_keyboard(void)
 			snprintf(line, sizeof line, "\xCA\xE4\xC8\xEB\xC6\xB4\xD2\xF4");
 		draw_ui(2, CONTENT_Y + 1, line, 0);
 
-		/* candidate row */
+		/* candidate row: every candidate, wrapped over up to two lines
+		   so the whole list is visible at once instead of scrolling */
 		int ncand = py_candidates();
 		int y = CONTENT_Y + 11;
-		if (ncand > 0) {
-			int shown = ncand > 10 ? 10 : ncand;
-			int start = 0;
-			if (py_pick >= shown)
-				start = py_pick - shown + 1;
-			int x = 2;
-			for (int i = 0; i < shown; i++) {
-				int idx = start + i;
-				uint16_t cc[SET_PHR_LEN];
-				int cl = py_candidate_cells(idx, cc);
-				int cw = py_candidate_w(idx);
-				if (idx >= ncand || cl <= 0 || x + cw > 126)
+		int x = 2;
+		int rows = 0;
+		for (int i = 0; i < ncand && rows < 2; i++) {
+			uint16_t cc[SET_PHR_LEN];
+			int cl = py_candidate_cells(i, cc);
+			int cw = py_candidate_w(i);
+			if (cl <= 0)
+				continue;
+			if (x + cw > 126) {
+				if (rows == 2)
 					break;
-				if (idx == py_pick)
-					drect(x - 1, y - 1, x + cw, y + 9, INKBAR);
-				for (int k = 0; k < cl; k++) {
-					draw_cell(x, y, cc[k], idx == py_pick);
-					x += cell_adv(cc[k]);
-				}
-				x += 2;
+				rows++;
+				x = 2;
+				y += 10;
 			}
-		} else if (py_len) {
-			draw_ui(2, y, "\xCE\xDE\xC6\xA5\xC5\xE4", 0);
+			if (i == py_pick)
+				drect(x - 1, y - 1, x + cw, y + 9, INKBAR);
+			for (int k = 0; k < cl; k++) {
+				draw_cell(x, y, cc[k], i == py_pick);
+				x += cell_adv(cc[k]);
+			}
+			x += 2;
 		}
-		grid_y = CONTENT_Y + 22;
+		if (ncand == 0 && py_len)
+			draw_ui(2, y, "\xCE\xDE\xC6\xA5\xC5\xE4", 0);
+		grid_y = CONTENT_Y + 33;	/* unused: no grid on this page */
 	} else {
 		/* five letter rows have to fit above the status line: start one
 		   row higher than the old grid did (its last row was clipped) */
@@ -4258,7 +4260,7 @@ static void draw_keyboard(void)
 
 	int gc = kb_cols();
 	int gr = punct ? 3 : (pinyin ? 2 : 5);
-	for (int r = 0; r < gr; r++) {
+	for (int r = 0; pinyin ? 0 : r < gr; r++) {
 		for (int c = 0; c < gc; c++) {
 			char ch = kb_char(r, c);
 			uint16_t pcell = punct ? punct_cell(r * 13 + c) : 0;
